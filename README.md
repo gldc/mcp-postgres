@@ -32,8 +32,9 @@ python postgres_server.py
 # …or…
 python postgres_server.py --conn "postgresql://user:pass@host:5432/db"
 
-# Or using Docker (build once, then run):
-# docker build -t mcp-postgres . && docker run -p 8000:8000 mcp-postgres
+# Or using Docker (build once, then run over HTTP):
+# docker build -t mcp-postgres . && docker run -p 8000:8000 mcp-postgres \
+#   python postgres_server.py --transport streamable-http --host 0.0.0.0 --port 8000
 ```
 
 ## Installation
@@ -46,6 +47,14 @@ To install PostgreSQL MCP Server for Claude Desktop automatically via [Smithery]
 npx -y @smithery/cli install @gldc/mcp-postgres --client claude
 ```
 
+Note: The published Smithery server uses the Streamable HTTP transport by default, binding to the configured host/port.
+
+Defaults (Smithery):
+- Transport: Streamable HTTP
+- Host: 127.0.0.1
+- Port: 8000
+You can override these in the Smithery server configuration.
+
 ### Manual Installation
 1. Clone this repository:
 ```bash
@@ -55,8 +64,8 @@ cd mcp-postgres
 
 2. Create and activate a virtual environment (recommended):
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
 ```
 
 3. Install dependencies:
@@ -203,10 +212,11 @@ Build the image:
 docker build -t mcp-postgres .
 ```
 
-Run the container without a database connection (the server stays inspectable):
+Run the container over Streamable HTTP (inspectable without a DSN):
 
 ```bash
-docker run -p 8000:8000 mcp-postgres
+docker run -p 8000:8000 mcp-postgres \
+  python postgres_server.py --transport streamable-http --host 0.0.0.0 --port 8000
 ```
 
 Run with a live PostgreSQL database by supplying `POSTGRES_CONNECTION_STRING`:
@@ -215,7 +225,8 @@ Run with a live PostgreSQL database by supplying `POSTGRES_CONNECTION_STRING`:
 docker run \
   -e POSTGRES_CONNECTION_STRING="postgresql://username:password@host:5432/database" \
   -p 8000:8000 \
-  mcp-postgres
+  mcp-postgres \
+  python postgres_server.py --transport streamable-http --host 0.0.0.0 --port 8000
 ```
 
 *If the environment variable is omitted, the server boots normally and all database‑backed tools return a friendly “connection string is not set” message until you provide it.*
@@ -228,7 +239,7 @@ To integrate this server with MCP-compatible tools (like Cursor), add it to your
 {
   "servers": {
     "postgres": {
-      "command": "/path/to/venv/bin/python",
+      "command": "/path/to/.venv/bin/python",
       "args": [
         "/path/to/postgres_server.py"
       ],
@@ -245,10 +256,12 @@ To integrate this server with MCP-compatible tools (like Cursor), add it to your
 - `MCP_HOST=0.0.0.0` and `MCP_PORT=8000` for SSE/HTTP transports
 - `MCP_SSE_MOUNT=/mcp` optional SSE mount path
 
+Defaults: host `127.0.0.1`, port `8000`. `MCP_HOST`/`MCP_PORT` mirror the `--host/--port` flags.
+
 *If `POSTGRES_CONNECTION_STRING` is omitted, the server still starts and is fully inspectable; database‑backed tools will simply return an informative error until the variable is provided.*
 
 Replace:
-- `/path/to/venv` with your virtual environment path
+- `/path/to/.venv` with your virtual environment path
 - `/path/to/postgres_server.py` with the absolute path to the server script
 
 ### HTTP Client Integration
@@ -286,7 +299,7 @@ For SSE instead of Streamable HTTP:
 
 ```bash
 python postgres_server.py --transport sse --host 0.0.0.0 --port 8000 --mount /mcp
-curl -N http://localhost:8000/sse  # Connects to the SSE endpoint
+curl -N http://localhost:8000/mcp/sse  # Connects to the SSE endpoint
 ```
 
 #### Python MCP Client Example (Streamable HTTP)
@@ -340,7 +353,7 @@ if __name__ == "__main__":
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Development & Tests
-- Create a venv and install runtime deps: `pip install -r requirements.txt`
+- Create a `.venv` and install runtime deps: `pip install -r requirements.txt`
 - (Optional) install test deps: `pip install -r dev-requirements.txt`
 - Run tests: `pytest -q`
 
