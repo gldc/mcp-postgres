@@ -3,10 +3,12 @@
   builder = "NIXPACKS"
 
 [deploy]
-  startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT --oauth-only"
+  startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT"
   healthcheckPath = "/health"
   healthcheckTimeout = 30
   restartPolicyType = "ON_FAILURE"
 
-[environments.production]
-  variables = {}  # Set in Railway dashboard for security
+# For OAuth companion service (optional separate deployment)
+[environments.oauth]
+  variables = {}
+  startCommand = "python oauth_companion.py --host 0.0.0.0 --port $PORT"

@@ -1,6 +1,22 @@
 # Railway Deployment Guide
 
-Complete guide for deploying your PostgreSQL MCP Server with OAuth to Railway.
+Complete guide for deploying your PostgreSQL MCP Server with OAuth to Railway using the **clean two-service architecture**.
+
+## Architecture Overview
+
+Your deployment can use one of these approaches:
+
+### Option 1: MCP Server Only (Simplified)
+- Single service deployment  
+- MCP server with Railway's managed PostgreSQL
+- OAuth info provided via MCP tools (no actual OAuth endpoints)
+- Good for testing and simple deployments
+
+### Option 2: MCP Server + OAuth Companion (Full Featured)  
+- Two separate Railway services
+- MCP server for database operations
+- OAuth companion for authentication
+- Full OAuth flow with secure multi-user support
 
 ## Prerequisites
 
@@ -11,174 +27,37 @@ Before deploying, ensure you have:
 - ✅ Railway account created
 - ✅ Code pushed to GitHub
 
-## Step 1: Prepare Repository
+## Option 1: MCP Server Only Deployment
 
-### Verify File Structure
+### Step 1: Deploy MCP Server to Railway
 
-Your repository should contain:
-```
-mcp-postgres/
-├── postgres_server.py          # Updated OAuth server
-├── requirements.txt           # Python dependencies
-├── railway.toml              # Railway configuration
-├── .env.example             # Environment template
-├── OAUTH_SETUP.md          # Setup guide
-├── RAILWAY_DEPLOYMENT.md   # This file
-└── README.md              # Project documentation
-```
+1. **Create Railway Project**:
+   - Visit [railway.app](https://railway.app)
+   - Click "New Project" → "Deploy from GitHub repo"
+   - Select your `mcp-postgres` repository
 
-### Final Code Review
+2. **Add PostgreSQL Database**:
+   - In Railway project, click "New" → "Database" → "PostgreSQL"
+   - Railway automatically creates `DATABASE_URL` environment variable
 
-**Verify `railway.toml` configuration:**
-```toml
-[build]
-  builder = "NIXPACKS"
-
-[deploy]
-  startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT --oauth-only"
-  healthcheckPath = "/health"
-  healthcheckTimeout = 30
-  restartPolicyType = "ON_FAILURE"
-```
-
-**Check `requirements.txt` includes all dependencies:**
-- fastmcp, mcp, psycopg, authlib, requests, python-jose, itsdangerous, uvicorn, fastapi, pydantic
-
-## Step 2: Railway Account Setup
-
-### Create Railway Account
-1. Visit [railway.app](https://railway.app)
-2. Sign up with GitHub (recommended for automatic deployments)
-3. Verify your email address
-4. Connect your GitHub account if not done during signup
-
-### Verify GitHub Connection
-1. Go to Railway dashboard
-2. Check that your GitHub repositories are accessible
-3. If needed, adjust GitHub app permissions in your GitHub settings
-
-## Step 3: Create Railway Project
-
-### Deploy from GitHub
-1. **New Project**: Click "New Project" in Railway dashboard
-2. **Deploy from GitHub**: Choose "Deploy from GitHub repo"
-3. **Select Repository**: Find and select your `mcp-postgres` repository
-4. **Confirm Deployment**: Railway will analyze your repo and suggest configuration
-
-### Initial Deployment
-- Railway automatically detects Python project
-- Uses Nixpacks to build based on `requirements.txt`
-- Reads configuration from `railway.toml`
-- Creates initial deployment (will fail without environment variables)
-
-## Step 4: Add PostgreSQL Database
-
-### Add Database Service
-1. **Add Service**: In your Railway project, click "New" → "Database" → "PostgreSQL"
-2. **Configure Database**: Accept default settings (PostgreSQL 15)
-3. **Automatic Variables**: Railway automatically creates `DATABASE_URL` environment variable
-
-### Database Details
-- **Automatic Backups**: Daily backups enabled by default
-- **SSL Encryption**: Enabled automatically
-- **Connection Pooling**: Managed by Railway
-- **Monitoring**: Available in Railway dashboard
-
-## Step 5: Configure Environment Variables
-
-### Required Variables
-
-Navigate to your service **Settings** → **Environment Variables**:
-
-```bash
-# OAuth Credentials (Required)
-GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your_client_secret
-
-# Session Security (Required)
-SECRET_KEY=your_32_character_secret_key
-
-# Optional: Safety Controls
-POSTGRES_READONLY=false
-POSTGRES_STATEMENT_TIMEOUT_MS=30000
-```
-
-### Auto-Provided Variables
-
-Railway automatically sets these:
-```bash
-DATABASE_URL=postgresql://postgres:password@hostname:port/database
-PORT=8000
-RAILWAY_PUBLIC_DOMAIN=your-app-name.railway.app
-RAILWAY_ENVIRONMENT=production
-```
-
-### Secure Secret Generation
-
-Generate a secure secret key locally:
-```bash
-# Generate secure secret
-openssl rand -hex 32
-
-# Copy result to Railway environment variables
-```
-
-## Step 6: Deploy and Verify
-
-### Trigger Deployment
-1. **Manual Deploy**: Click "Deploy" in Railway dashboard
-2. **Auto Deploy**: Push commits to connected GitHub branch
-3. **Watch Logs**: Monitor deployment progress in Railway dashboard
-
-### Check Deployment Status
-```bash
-# Your app will be available at:
-https://your-app-name.railway.app
-
-# Health check endpoint:
-curl https://your-app-name.railway.app/health
-
-# Expected response:
-{
-  "status": "healthy",
-  "service": "PostgreSQL MCP Server with OAuth",
-  "oauth_enabled": true,
-  "database_available": true,
-  "environment": "production"
-}
-```
-
-## Step 7: Update Google OAuth Configuration
-
-### Add Railway Domain to OAuth
-
-1. **Google Cloud Console**: Go to APIs & Services → Credentials
-2. **Edit OAuth Client**: Click on your OAuth 2.0 Client ID
-3. **Add Authorized Origins**: 
+3. **Configure Environment Variables**:
+   ```bash
+   # Optional: OAuth configuration (for auth_info tool)
+   GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=your_client_secret
+   SECRET_KEY=your_32_character_secret_key
+   
+   # Optional: Safety controls
+   POSTGRES_READONLY=false
+   POSTGRES_STATEMENT_TIMEOUT_MS=30000
    ```
-   https://your-app-name.railway.app
-   ```
-4. **Add Redirect URIs**:
-   ```
-   https://your-app-name.railway.app/auth/callback
-   ```
-5. **Save Changes**: Click Save
 
-### Test OAuth Flow
+4. **Deploy**:
+   - Railway uses `railway.toml` configuration
+   - Deploys with: `python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT`
+   - Health check at `/health` endpoint
 
-```bash
-# Get login URL from your deployed server
-curl https://your-app-name.railway.app/auth/login
-
-# Response includes authorization_url - test in browser
-# Complete OAuth flow with Railway domain
-```
-
-## Step 8: Configure Claude Desktop
-
-### Update Claude Desktop Configuration
-
-Edit your Claude Desktop configuration file:
+### Step 2: Configure Claude Desktop
 
 ```json
 {
@@ -186,88 +65,278 @@ Edit your Claude Desktop configuration file:
     "postgres-railway": {
       "transport": {
         "type": "http",
-        "url": "https://your-app-name.railway.app"
-      },
-      "description": "PostgreSQL Server with OAuth on Railway"
+        "url": "https://your-mcp-app.railway.app"
+      }
     }
   }
 }
 ```
 
-### Restart Claude Desktop
+## Option 2: Full OAuth Deployment (Two Services)
 
-1. **Quit Claude Desktop** completely
-2. **Restart Claude Desktop**
-3. **Verify Connection**: The server should appear in available MCP servers
+### Step 1: Deploy MCP Server
 
-## Step 9: End-to-End Testing
+Follow Option 1 steps above to deploy the MCP server.
 
-### Test Authentication Flow
+### Step 2: Deploy OAuth Companion Service
 
-1. **Ask Claude about database info**:
-   ```
-   "Can you show me information about the database server?"
-   ```
+1. **Create Second Railway Service**:
+   - In the same Railway project, click "New" → "GitHub repo"
+   - Select the same repository
+   - This creates a second service
 
-2. **Claude will call the auth_info tool** and provide OAuth login URL
+2. **Configure OAuth Service**:
+   - Go to the second service settings
+   - Change the start command to: `python oauth_companion.py --host 0.0.0.0 --port $PORT`
+   - Set environment variables:
+     ```bash
+     GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+     GOOGLE_CLIENT_SECRET=your_client_secret
+     SECRET_KEY=your_32_character_secret_key
+     ```
 
-3. **Complete Authentication**:
-   - Click the provided URL
-   - Complete Google OAuth flow
-   - Receive session token
+3. **Update OAuth Redirect URIs**:
+   - In Google Cloud Console, add redirect URI:
+   - `https://your-oauth-app.railway.app/auth/callback`
 
-4. **Set Database Connection**:
+### Step 3: Configure Cross-Service Communication
+
+1. **Get Service URLs**:
+   - MCP Service: `https://your-mcp-app.railway.app`
+   - OAuth Service: `https://your-oauth-app.railway.app`
+
+2. **Test Services**:
    ```bash
-   curl -X POST https://your-app-name.railway.app/connection/set \
-     -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+   # Test MCP server health
+   curl https://your-mcp-app.railway.app/
+   # Expect MCP protocol response (404/405 is normal)
+   
+   # Test OAuth service health  
+   curl https://your-oauth-app.railway.app/health
+   # Expect: {"status": "healthy", ...}
+   ```
+
+## Detailed Railway Configuration
+
+### File Structure for Deployment
+
+Your repository should have:
+```
+mcp-postgres/
+├── postgres_server.py          # MCP server
+├── oauth_companion.py          # OAuth service  
+├── requirements.txt           # Dependencies
+├── railway.toml              # Railway config
+├── .env.example             # Environment template
+└── [documentation files]
+```
+
+### railway.toml Configuration
+
+```toml
+# Default: Deploy MCP server
+[build]
+  builder = "NIXPACKS"
+
+[deploy]
+  startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT"
+  healthcheckPath = "/health"  
+  healthcheckTimeout = 30
+  restartPolicyType = "ON_FAILURE"
+
+# Optional: OAuth service configuration
+[environments.oauth]
+  variables = {}
+  startCommand = "python oauth_companion.py --host 0.0.0.0 --port $PORT"
+```
+
+### Environment Variables
+
+#### MCP Server Variables
+```bash
+# Auto-provided by Railway
+DATABASE_URL=postgresql://postgres:password@hostname:port/database
+PORT=8000
+RAILWAY_PUBLIC_DOMAIN=your-mcp-app.railway.app
+RAILWAY_ENVIRONMENT=production
+
+# Optional: OAuth info (for auth_info tool)
+GOOGLE_CLIENT_ID=your_client_id
+GOOGLE_CLIENT_SECRET=your_client_secret
+SECRET_KEY=your_secret_key
+
+# Optional: Safety controls
+POSTGRES_READONLY=false
+POSTGRES_STATEMENT_TIMEOUT_MS=30000
+```
+
+#### OAuth Service Variables
+```bash
+# Auto-provided by Railway
+PORT=8000
+RAILWAY_PUBLIC_DOMAIN=your-oauth-app.railway.app  
+RAILWAY_ENVIRONMENT=production
+
+# Required for OAuth functionality
+GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_client_secret
+SECRET_KEY=your_secret_key
+
+# Auto-configured
+REDIRECT_URI=https://your-oauth-app.railway.app/auth/callback
+```
+
+## Testing Deployed Services
+
+### Test MCP Server
+
+```bash
+# Health check
+curl https://your-mcp-app.railway.app/health
+# Expected: {"status": "healthy", ...}
+
+# MCP protocol test (expect 404/405 - this is normal)
+curl https://your-mcp-app.railway.app/
+```
+
+### Test OAuth Service (if deployed)
+
+```bash
+# Health check
+curl https://your-oauth-app.railway.app/health
+# Expected: {"status": "healthy", "oauth_enabled": true}
+
+# Get OAuth login URL
+curl https://your-oauth-app.railway.app/auth/login
+# Expected: {"authorization_url": "https://accounts.google.com/..."}
+```
+
+### End-to-End OAuth Test
+
+1. **Get Login URL**:
+   ```bash
+   curl https://your-oauth-app.railway.app/auth/login
+   ```
+
+2. **Complete Authentication**:
+   - Visit the authorization URL
+   - Complete Google OAuth flow
+   - Copy callback URL
+
+3. **Test Database Connection**:
+   ```bash
+   # Extract code from callback and exchange for token
+   curl "https://your-oauth-app.railway.app/auth/callback?code=YOUR_CODE"
+   
+   # Set database connection
+   curl -X POST https://your-oauth-app.railway.app/connection/set \
+     -H "Authorization: Bearer YOUR_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"connection_string": "postgresql://user:pass@host:port/db"}'
    ```
 
-### Test Database Operations
+## Claude Desktop Configuration
 
-After authentication and connection setup:
+### MCP Server Only
+
+```json
+{
+  "mcpServers": {
+    "postgres-railway": {
+      "transport": {
+        "type": "http",
+        "url": "https://your-mcp-app.railway.app"
+      },
+      "description": "PostgreSQL on Railway with OAuth info"
+    }
+  }
+}
 ```
-"List all tables in the database"
-"Show me the schema for the users table"  
-"Run a query to count rows in the products table"
+
+### Full OAuth Setup (Two Services)
+
+```json
+{
+  "mcpServers": {
+    "postgres-railway": {
+      "transport": {
+        "type": "http", 
+        "url": "https://your-mcp-app.railway.app"
+      },
+      "description": "PostgreSQL MCP Server"
+    }
+  }
+}
 ```
+
+**Note**: Claude Desktop connects to the MCP server. OAuth authentication happens through the separate OAuth service URLs.
 
 ## Railway Management
 
-### Monitor Your Application
+### Monitoring
 
 **Railway Dashboard Features**:
-- **Metrics**: CPU, memory, and network usage
+- **Metrics**: CPU, memory, network usage for both services
 - **Logs**: Real-time application logs
-- **Database**: PostgreSQL metrics and queries
+- **Database**: PostgreSQL performance metrics
 - **Deployments**: History and rollback options
 
 ### Scaling
 
 **Automatic Scaling**:
-- Railway automatically scales based on traffic
-- No configuration needed for typical MCP usage
-- Scales to zero when not in use (cost savings)
-
-**Resource Limits**:
-- **Starter Plan**: 512MB RAM, suitable for development
-- **Pro Plan**: 8GB RAM, suitable for production
-- **Database Storage**: Starts at 1GB, scales automatically
+- Railway scales both services based on demand
+- MCP server scales with database query load
+- OAuth service scales with authentication requests
+- No manual configuration required
 
 ### Cost Management
 
-**Pricing Overview**:
-- **Starter Plan**: $5/month (512MB RAM)
-- **Pro Plan**: $20/month (8GB RAM)
-- **Database**: Included in plan pricing
-- **Bandwidth**: Generous limits included
+**Pricing Structure**:
+- **Starter Plan**: $5/month per service
+  - MCP Server: $5/month
+  - OAuth Service: $5/month (optional)
+  - PostgreSQL: Included
+- **Pro Plan**: $20/month per service (production workloads)
 
 **Cost Optimization**:
-- Use Starter plan for development/testing
-- Upgrade to Pro for production workloads
+- Start with MCP server only ($5/month)
+- Add OAuth service when needed (+$5/month)
 - Monitor usage in Railway dashboard
-- Set up billing alerts
+- Services auto-sleep when not in use
+
+## Production Considerations
+
+### Security Best Practices
+
+1. **Environment Variables**: Store all secrets in Railway dashboard
+2. **OAuth Configuration**: 
+   - Use HTTPS redirect URIs only
+   - Regularly rotate OAuth secrets
+3. **Database Security**:
+   - Use Railway's managed PostgreSQL (includes SSL)
+   - Set up proper user permissions
+4. **API Security**:
+   - Enable `POSTGRES_READONLY` for read-only access
+   - Set `POSTGRES_STATEMENT_TIMEOUT_MS` for query limits
+
+### Performance Optimization
+
+1. **Connection Pooling**: Railway PostgreSQL includes connection pooling
+2. **Caching**: Railway provides automatic CDN caching
+3. **Monitoring**: Set up monitoring alerts in Railway dashboard
+4. **Resource Limits**: Railway handles resource allocation automatically
+
+### Backup and Recovery
+
+1. **Database Backups**: 
+   - Automatic daily backups by Railway
+   - Point-in-time recovery available
+   - Manual backup triggers available
+
+2. **Code Backups**:
+   - Git repository provides version control
+   - Railway keeps deployment history
+   - Rollback capability through Railway CLI
 
 ## Troubleshooting
 
@@ -277,35 +346,37 @@ After authentication and connection setup:
 ```bash
 # Check build logs in Railway dashboard
 # Common fixes:
-# 1. Verify requirements.txt syntax
-# 2. Check Python version compatibility
-# 3. Ensure all imports are available
+# 1. Verify requirements.txt includes all dependencies
+# 2. Check Python version compatibility  
+# 3. Ensure start commands are correct
 ```
 
-**Database Connection Errors**:
+**Service Communication Issues**:
 ```bash
-# Verify DATABASE_URL is set
-# Check database service is running
-# Test connection in Railway console:
-railway run psql $DATABASE_URL
+# Verify both services are deployed and healthy
+curl https://your-mcp-app.railway.app/health
+curl https://your-oauth-app.railway.app/health
+
+# Check environment variables are set correctly
+# Verify Google OAuth redirect URIs match Railway domains
 ```
 
-**OAuth Redirect Errors**:
+**Database Connection Issues**:
 ```bash
-# Verify redirect URI matches exactly in Google Console
-# Check HTTPS is used (Railway provides automatically)
-# Ensure domain is correct (no typos)
+# Railway automatically sets DATABASE_URL
+# Check in Railway dashboard under Variables
+# Test connection using Railway CLI:
+railway connect postgres
 ```
 
-**Health Check Failures**:
+**OAuth Flow Issues**:
 ```bash
-# Check /health endpoint manually:
-curl https://your-app-name.railway.app/health
+# Verify redirect URI matches exactly:
+# Google Console: https://your-oauth-app.railway.app/auth/callback
+# Railway domain: https://your-oauth-app.railway.app
 
-# Common issues:
-# 1. Database connection failed
-# 2. OAuth variables not set
-# 3. Application startup errors
+# Check OAuth service logs in Railway dashboard
+# Common issue: GOOGLE_CLIENT_SECRET not set or incorrect
 ```
 
 ### Railway CLI Commands
@@ -317,50 +388,46 @@ npm install -g @railway/cli
 
 **Useful Commands**:
 ```bash
-# Login and link project
+# Login and connect to project
 railway login
 railway link
 
-# View logs
-railway logs --follow
-
-# Connect to database
-railway connect postgres
+# View logs for specific service
+railway logs --service mcp-server
+railway logs --service oauth-service
 
 # View environment variables
 railway variables
 
-# Deploy manually
-railway up
-
-# Open deployed app
-railway open
-```
-
-### Debugging Application Issues
-
-**View Application Logs**:
-```bash
-# Real-time logs
-railway logs --follow
-
-# Filter by service
-railway logs --service postgres-server --follow
-
-# Search logs
-railway logs | grep ERROR
-```
-
-**Database Debugging**:
-```bash
-# Connect to PostgreSQL
+# Connect to database
 railway connect postgres
 
-# View database details
-railway variables | grep DATABASE_URL
+# Deploy manually
+railway up
+```
 
-# Test queries
-railway run psql $DATABASE_URL -c "SELECT version();"
+### Debug Mode
+
+**Local Development**:
+```bash
+# Test locally before deploying
+python test_oauth_client.py
+
+# Debug specific issues
+python -m pdb postgres_server.py
+python -m pdb oauth_companion.py
+```
+
+**Production Debugging**:
+```bash
+# View service logs
+railway logs --follow --service mcp-server
+
+# Check service health
+curl https://your-app.railway.app/health
+
+# Test MCP protocol connection
+# Use MCP client library to test connection
 ```
 
 ## Maintenance and Updates
@@ -369,86 +436,82 @@ railway run psql $DATABASE_URL -c "SELECT version();"
 
 **GitHub Integration**:
 - Push to main branch triggers automatic deployment
-- Railway builds and deploys new version
+- Both services update simultaneously
 - Zero-downtime deployments
-- Rollback available if needed
+- Rollback available if issues occur
 
-**Manual Deployments**:
+### Manual Deployments
+
 ```bash
-# Deploy current branch
-railway up
-
 # Deploy specific commit
 git checkout <commit-hash>
 railway up
+
+# Deploy to specific service
+railway up --service mcp-server
+railway up --service oauth-service
 ```
 
 ### Database Maintenance
 
-**Backups**:
-- Automatic daily backups enabled
-- Point-in-time recovery available
-- Manual backup triggers available
-
-**Updates**:
-- PostgreSQL version updates managed by Railway
+**Automatic Maintenance**:
+- PostgreSQL updates managed by Railway
 - Automatic security patches
-- Minimal downtime for maintenance
+- Backup management
+- Performance monitoring
 
-### Monitoring and Alerts
-
-**Built-in Monitoring**:
-- Application metrics dashboard
-- Database performance metrics
-- Error rate and response time tracking
-
-**Custom Monitoring**:
+**Manual Operations**:
 ```bash
-# Health check endpoint for external monitoring
-https://your-app-name.railway.app/health
+# Connect to database for maintenance
+railway connect postgres
 
-# Database connection status
-# Authentication system status
-# OAuth configuration validation
+# Run database migrations
+railway run psql $DATABASE_URL -f migration.sql
 ```
 
-## Production Considerations
+## Migration from Single Service
 
-### Security Best Practices
+If you started with MCP server only and want to add full OAuth:
 
-1. **Environment Variables**: Never commit secrets to git
-2. **OAuth Secrets**: Rotate Google OAuth credentials periodically
-3. **Database Access**: Use minimal privilege connection strings
-4. **HTTPS**: Enabled automatically by Railway
-5. **Session Security**: Strong SECRET_KEY (32+ characters)
+1. **Deploy OAuth Companion**:
+   - Create second service in same Railway project
+   - Configure with OAuth environment variables
+   - Update Google OAuth redirect URIs
 
-### Performance Optimization
+2. **Update MCP Server**:
+   - Add OAuth environment variables
+   - No code changes needed
+   - MCP server will show OAuth information in auth_info tool
 
-1. **Connection Pooling**: Enabled by default with Railway PostgreSQL
-2. **Query Timeouts**: Set POSTGRES_STATEMENT_TIMEOUT_MS appropriately
-3. **Read-only Mode**: Enable POSTGRES_READONLY when appropriate
-4. **Monitoring**: Use Railway metrics to identify bottlenecks
-
-### Backup and Recovery
-
-1. **Database Backups**: Automatic daily backups by Railway
-2. **Code Backups**: Git repository with version control
-3. **Configuration**: Document all environment variables
-4. **Recovery Plan**: Test restoration procedures
+3. **Test Integration**:
+   - Verify both services are healthy
+   - Test OAuth flow end-to-end
+   - Update Claude Desktop configuration
 
 ## Next Steps
 
 1. **✅ Complete deployment** following this guide
-2. **🔧 Configure monitoring** and alerts
-3. **📊 Set up analytics** for usage tracking
-4. **👥 Add team members** to Railway project if needed
-5. **📈 Plan for scaling** based on usage patterns
+2. **🧪 Test all functionality** with your deployed services
+3. **🔧 Configure Claude Desktop** with production URLs
+4. **📊 Monitor usage** through Railway dashboard
+5. **🔒 Review security settings** and access controls
+6. **📈 Plan for scaling** based on usage patterns
 
 ## Support Resources
 
 - **Railway Documentation**: [docs.railway.app](https://docs.railway.app)
 - **Railway Discord**: Community support and discussions
-- **Google OAuth Documentation**: [developers.google.com/identity/protocols/oauth2](https://developers.google.com/identity/protocols/oauth2)
+- **Google OAuth Documentation**: [developers.google.com/identity](https://developers.google.com/identity)
 - **MCP Documentation**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
 
 Your PostgreSQL MCP Server with OAuth is now production-ready on Railway! 🚀
+
+## Cost Summary
+
+| Configuration | Monthly Cost | Features |
+|---------------|---------------|-----------|
+| **MCP Only** | $5-20 | Basic database access, managed PostgreSQL |
+| **MCP + OAuth** | $10-40 | Multi-user auth, secure connections, full features |
+| **Enterprise** | $40+ | High availability, advanced monitoring, premium support |
+
+Choose the configuration that best fits your needs and scale up as you grow!
