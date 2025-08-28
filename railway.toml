@@ -3,7 +3,7 @@
   builder = "NIXPACKS"
 
 [deploy]
-  startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT"
+  startCommand = "python start.py"
   # No HTTP healthcheck for MCP server; it doesn't expose /health over HTTP
   # healthcheckPath = "/health"
   # healthcheckTimeout = 30
@@ -21,7 +21,7 @@
     # REDIRECT_URI will be auto-computed from RAILWAY_PUBLIC_DOMAIN, but you can override if needed
 
   [environments.oauth.deploy]
-    startCommand = "python oauth_companion.py --host 0.0.0.0 --port $PORT"
+    startCommand = "python start.py"
     healthcheckPath = "/health"
     healthcheckTimeout = 30
     restartPolicyType = "ON_FAILURE"
