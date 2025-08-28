@@ -60,4 +60,6 @@ config.ini
 credentials.json 
 .cursor/
 glama/
+.env.example
 AGENTS.md
+CHANGELOG.md

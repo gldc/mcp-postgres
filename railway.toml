@@ -1,0 +1,12 @@
+# railway.toml - Railway configuration
+[build]
+  builder = "NIXPACKS"
+
+[deploy]
+  startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT --oauth-only"
+  healthcheckPath = "/health"
+  healthcheckTimeout = 30
+  restartPolicyType = "ON_FAILURE"
+
+[environments.production]
+  variables = {}  # Set in Railway dashboard for security
