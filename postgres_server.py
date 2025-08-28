@@ -15,6 +15,8 @@ import sqlite3
 from datetime import datetime
 import threading
 from urllib.parse import urlparse
+import requests
+from itsdangerous import URLSafeTimedSerializer
 
 # Configure logging
 def setup_logging():
@@ -60,6 +62,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 SECRET_KEY = os.getenv("SECRET_KEY")
 REDIRECT_URI = railway_config['redirect_uri']
+OAUTH_SERVICE_URL = os.getenv("OAUTH_SERVICE_URL")
 
 # Simple session storage for development (use Redis/database for production)
 class SessionManager:
@@ -367,6 +370,15 @@ class QueryJSONInput(BaseModel):
     parameters: Optional[List[Any]] = None
     row_limit: int = 500
 
+class QueryAuthInput(QueryInput):
+    token: str = Field(description="Session token from OAuth companion")
+
+class QueryJSONAuthInput(BaseModel):
+    sql: str
+    parameters: Optional[List[Any]] = None
+    row_limit: int = 500
+    token: str = Field(description="Session token from OAuth companion")
+
 def _is_select_like(sql: str) -> bool:
     token = sql.lstrip().split(" ", 1)[0].lower() if sql.strip() else ""
     return token in {"select", "with", "show", "values", "explain"}
@@ -430,6 +442,101 @@ def _exec_query(
             conn.close()
             logger.debug("Database connection closed")
 
+def _exec_query_with_dsn(
+    dsn: str,
+    sql: str,
+    parameters: Optional[List[Any]],
+    row_limit: int,
+    as_json: bool,
+) -> Any:
+    conn = None
+    try:
+        conn = psycopg.connect(dsn)
+        with conn.cursor(row_factory=dict_row) as cur:
+            t0 = time.time()
+            if parameters:
+                cur.execute(sql, parameters)
+            else:
+                cur.execute(sql)
+
+            if cur.description is None:
+                conn.commit()
+                return [] if as_json else f"Query executed successfully. Rows affected: {cur.rowcount}"
+
+            rows = cur.fetchmany(row_limit + (0 if as_json else 1))
+            truncated = (not as_json) and (len(rows) > row_limit)
+            if truncated:
+                rows = rows[:row_limit]
+            if as_json:
+                return [dict(r) for r in rows]
+
+            if not rows:
+                return "No results found"
+
+            duration_ms = int((time.time() - t0) * 1000)
+            logger.info(f"[auth] Query returned {len(rows)} rows in {duration_ms}ms{' (truncated)' if truncated else ''}")
+            keys: List[str] = list(rows[0].keys())
+            result_lines = ["Results:", "--------", " | ".join(keys), " | ".join(["---"] * len(keys))]
+            for row in rows:
+                vals = []
+                for k in keys:
+                    v = row.get(k)
+                    if v is None:
+                        vals.append("NULL")
+                    elif isinstance(v, (bytes, bytearray)):
+                        vals.append(v.decode("utf-8", errors="replace"))
+                    else:
+                        vals.append(str(v).replace('%', '%%'))
+                result_lines.append(" | ".join(vals))
+            if truncated:
+                result_lines.append(f"\nNote: Results truncated at {row_limit} rows. Increase row_limit to fetch more.")
+            return "\n".join(result_lines)
+    except Exception as e:
+        return [] if as_json else f"Query error: {str(e)}\nQuery: {sql}"
+    finally:
+        if conn:
+            conn.close()
+            logger.debug("[auth] Database connection closed")
+
+def _decode_session_token(token: str) -> Dict[str, Any]:
+    if not SECRET_KEY:
+        raise RuntimeError("SECRET_KEY is not configured on MCP server")
+    serializer = URLSafeTimedSerializer(SECRET_KEY)
+    data = serializer.loads(token, max_age=86400 * 7)
+    if not isinstance(data, dict) or 'user_id' not in data:
+        raise RuntimeError("Invalid session token")
+    return data
+
+def _validate_token_with_oauth(token: str) -> bool:
+    if not OAUTH_SERVICE_URL:
+        # If not configured, skip remote validation and rely on local decode
+        return True
+    try:
+        resp = requests.get(
+            f"{OAUTH_SERVICE_URL.rstrip('/')}/auth/status",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        return bool(data.get("authenticated"))
+    except Exception:
+        return False
+
+def _fetch_user_connection_string(user_id: str) -> Optional[str]:
+    if not OAUTH_SERVICE_URL:
+        return None
+    try:
+        resp = requests.get(f"{OAUTH_SERVICE_URL.rstrip('/')}/users/{user_id}/connection", timeout=10)
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+        return payload.get("connection_string")
+    except Exception as e:
+        logger.error(f"Failed to fetch user connection from OAuth service: {e}")
+        return None
+
 @mcp.tool()
 def query(
     sql: str,
@@ -472,6 +579,49 @@ def run_query_json(input: QueryJSONInput) -> List[Dict[str, Any]]:
     """Execute a SQL query and return JSON rows with typed input (preferred)."""
     res = _exec_query(input.sql, input.parameters, input.row_limit, as_json=True)
     return res if isinstance(res, list) else []
+
+@mcp.tool()
+def run_query_auth(input: QueryAuthInput) -> str:
+    """Execute a SQL query using the authenticated user's connection.
+    Requires a valid session token (from OAuth companion)."""
+    try:
+        if not input.token:
+            return "Authentication required: missing token"
+        if not _validate_token_with_oauth(input.token):
+            return "Authentication failed or session expired"
+        token_data = _decode_session_token(input.token)
+        user_id = token_data.get('user_id')
+        dsn = _fetch_user_connection_string(user_id)
+        if not dsn:
+            return "No database connection configured for user"
+        as_json = input.format == "json"
+        res = _exec_query_with_dsn(dsn, input.sql, input.parameters, input.row_limit, as_json)
+        if as_json and not isinstance(res, str):
+            try:
+                return json.dumps(res, default=str)
+            except Exception as e:
+                return f"JSON encoding error: {e}"
+        return res  # type: ignore[return-value]
+    except Exception as e:
+        return f"Auth query error: {str(e)}"
+
+@mcp.tool()
+def run_query_json_auth(input: QueryJSONAuthInput) -> List[Dict[str, Any]]:
+    """Execute a SQL query and return JSON rows using the authenticated user's connection."""
+    try:
+        if not input.token:
+            return []
+        if not _validate_token_with_oauth(input.token):
+            return []
+        token_data = _decode_session_token(input.token)
+        user_id = token_data.get('user_id')
+        dsn = _fetch_user_connection_string(user_id)
+        if not dsn:
+            return []
+        res = _exec_query_with_dsn(dsn, input.sql, input.parameters, input.row_limit, as_json=True)
+        return res if isinstance(res, list) else []
+    except Exception:
+        return []
 
 def _get_current_schema() -> str:
     try:
