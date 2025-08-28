@@ -25,7 +25,7 @@ import urllib.parse
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, HTMLResponse
 import requests
 from itsdangerous import URLSafeTimedSerializer
 import psycopg
@@ -441,20 +441,32 @@ async def callback(request: Request):
         # Create session token
         serializer = URLSafeTimedSerializer(SECRET_KEY)
         session_token = serializer.dumps({'user_id': user_id})
-        
+
         logger.info(f"Session created for user: {email}")
-        
-        return {
+
+        # Set HTTP-only session cookie for browser-based flow
+        response = JSONResponse(content={
             "success": True,
             "user": {"id": user_id, "email": email},
             "session_token": session_token,
             "message": "Authentication successful. You can now set your database connection.",
             "next_steps": {
-                "1": "Save your session token",
-                "2": "Use the /connection/set endpoint to configure your database",
+                "1": "Visit /connection to set your database connection in the browser",
+                "2": "Or POST to /connection/set with your token (API)",
                 "3": "The MCP server can now use your authenticated connection"
-            }
-        }
+            },
+            "next_step_url": "/connection"
+        })
+        response.set_cookie(
+            key="session_token",
+            value=session_token,
+            httponly=True,
+            secure=(railway_config['environment'] == 'production'),
+            samesite="Lax",
+            max_age=86400 * 7,
+            path="/",
+        )
+        return response
         
     except HTTPException:
         raise
@@ -506,22 +518,105 @@ async def auth_status(request: Request):
     
     return {"authenticated": False}
 
+@app.get("/connection")
+async def connection_form(request: Request):
+    """Simple HTML form for users to set their database connection string."""
+    # Check if session cookie exists to provide a better UX
+    has_token = bool(request.cookies.get('session_token'))
+    html = f"""
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Configure Database Connection</title>
+        <style>
+          body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; margin: 2rem; color: #111; }}
+          .card {{ max-width: 640px; padding: 1.5rem; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }}
+          label {{ display: block; font-weight: 600; margin-bottom: 0.5rem; }}
+          input[type="text"] {{ width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }}
+          button {{ margin-top: 1rem; background: #111827; color: white; padding: 0.75rem 1rem; border: none; border-radius: 8px; cursor: pointer; }}
+          .note {{ color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem; }}
+          .ok {{ color: #16a34a; }} .err {{ color: #dc2626; }}
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>Configure Database Connection</h2>
+          <p class="note">{('Session detected. You can submit directly.' if has_token else 'No session cookie found. Authenticate via /auth/login first, or include an Authorization: Bearer token.')}</p>
+          <form id="connForm">
+            <label for="cs">Connection String</label>
+            <input id="cs" name="connection_string" type="text" placeholder="postgresql://user:pass@host:port/db" required />
+            <button type="submit">Save Connection</button>
+          </form>
+          <p id="msg" class="note"></p>
+        </div>
+        <script>
+          const form = document.getElementById('connForm');
+          const msg = document.getElementById('msg');
+          form.addEventListener('submit', async (e) => {{
+            e.preventDefault();
+            msg.textContent = 'Saving...';
+            const cs = document.getElementById('cs').value;
+            try {{
+              const res = await fetch('/connection/set', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                credentials: 'include',
+                body: JSON.stringify({{ connection_string: cs }})
+              }});
+              const data = await res.json();
+              if (res.ok && data.success) {{
+                msg.textContent = '✓ Connection saved successfully';
+                msg.className = 'note ok';
+              }} else {{
+                msg.textContent = 'Error: ' + (data.error || data.message || res.statusText);
+                msg.className = 'note err';
+              }}
+            }} catch (err) {{
+              msg.textContent = 'Network error: ' + err;
+              msg.className = 'note err';
+            }}
+          }});
+        </script>
+      </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
 @app.post("/connection/set")
 async def set_connection(request: Request):
     """Set database connection for authenticated user"""
     auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        raise HTTPException(status_code=401, detail={"error": "Authentication required"})
-    
-    token = auth_header[7:]
+    token = None
+    if auth_header.startswith('Bearer '):
+        token = auth_header[7:]
+    else:
+        # Fallback to session cookie for browser-based flow
+        token = request.cookies.get('session_token')
+        if not token:
+            raise HTTPException(status_code=401, detail={"error": "Authentication required"})
     
     try:
         serializer = URLSafeTimedSerializer(SECRET_KEY)
         data = serializer.loads(token, max_age=86400 * 7)
         user_id = data['user_id']
         
-        request_data = await request.json()
-        connection_string = request_data.get('connection_string')
+        # Support both JSON and form submissions
+        connection_string = None
+        content_type = request.headers.get('content-type', '')
+        if 'application/json' in content_type:
+            try:
+                request_data = await request.json()
+                connection_string = request_data.get('connection_string')
+            except Exception:
+                connection_string = None
+        if not connection_string:
+            try:
+                form = await request.form()
+                connection_string = form.get('connection_string')
+            except Exception:
+                connection_string = None
         
         if not connection_string:
             raise HTTPException(status_code=400, detail={"error": "connection_string is required"})

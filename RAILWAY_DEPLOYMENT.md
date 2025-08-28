@@ -54,8 +54,9 @@ Before deploying, ensure you have:
 
 4. **Deploy**:
    - Railway uses `railway.toml` configuration
-   - Deploys with: `python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT`
-   - Health check at `/health` endpoint
+   - Deploys with unified launcher: `python start.py`
+   - Default `SERVICE_ROLE` is `mcp` → runs `postgres_server.py` with streamable HTTP
+   - Note: MCP service does not expose HTTP `/health` by default; healthchecks are disabled for it in `railway.toml`
 
 ### Step 2: Configure Claude Desktop
 
@@ -85,10 +86,11 @@ Follow Option 1 steps above to deploy the MCP server.
    - Select the same repository
    - This creates a second service
 
-2. **Configure OAuth Service**:
+2. **Configure OAuth Service** (no custom start command needed):
    - Go to the second service settings
-   - Change the start command to: `python oauth_companion.py --host 0.0.0.0 --port $PORT`
-   - Set environment variables:
+   - Set environment variable `SERVICE_ROLE=oauth` (the unified launcher will run `oauth_companion.py`)
+   - Optionally set the service Environment to `oauth` to apply the `/health` healthcheck from `railway.toml`
+   - Set required environment variables:
      ```bash
      GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
      GOOGLE_CLIENT_SECRET=your_client_secret
@@ -107,10 +109,9 @@ Follow Option 1 steps above to deploy the MCP server.
 
 2. **Test Services**:
    ```bash
-   # Test MCP server health
-   curl https://your-mcp-app.railway.app/
-   # Expect MCP protocol response (404/405 is normal)
-   
+   # Test MCP server (no HTTP /health by default; 404/405 on / is normal)
+   curl -i https://your-mcp-app.railway.app/
+
    # Test OAuth service health  
    curl https://your-oauth-app.railway.app/health
    # Expect: {"status": "healthy", ...}
@@ -139,15 +140,24 @@ mcp-postgres/
   builder = "NIXPACKS"
 
 [deploy]
-  startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT"
-  healthcheckPath = "/health"  
-  healthcheckTimeout = 30
+  startCommand = "python start.py"
+  # No HTTP healthcheck for MCP server; it doesn't expose /health over HTTP
   restartPolicyType = "ON_FAILURE"
 
 # Optional: OAuth service configuration
 [environments.oauth]
-  variables = {}
-  startCommand = "python oauth_companion.py --host 0.0.0.0 --port $PORT"
+  [environments.oauth.variables]
+    # Optionally place OAuth secrets here or set in the UI
+    # GOOGLE_CLIENT_ID = "your_client_id.apps.googleusercontent.com"
+    # GOOGLE_CLIENT_SECRET = "your_client_secret"
+    # SECRET_KEY = "your_32_char_secret"
+    # SERVICE_ROLE = "oauth"  # unified launcher selects oauth_companion
+
+  [environments.oauth.deploy]
+    startCommand = "python start.py"
+    healthcheckPath = "/health"
+    healthcheckTimeout = 30
+    restartPolicyType = "ON_FAILURE"
 ```
 
 ### Environment Variables
@@ -182,6 +192,9 @@ GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your_client_secret
 SECRET_KEY=your_secret_key
 
+# Unified launcher role selector
+SERVICE_ROLE=oauth
+
 # Auto-configured
 REDIRECT_URI=https://your-oauth-app.railway.app/auth/callback
 ```
@@ -191,12 +204,8 @@ REDIRECT_URI=https://your-oauth-app.railway.app/auth/callback
 ### Test MCP Server
 
 ```bash
-# Health check
-curl https://your-mcp-app.railway.app/health
-# Expected: {"status": "healthy", ...}
-
-# MCP protocol test (expect 404/405 - this is normal)
-curl https://your-mcp-app.railway.app/
+# MCP protocol test (expect 404/405 on / - this is normal)
+curl -i https://your-mcp-app.railway.app/
 ```
 
 ### Test OAuth Service (if deployed)
@@ -223,17 +232,15 @@ curl https://your-oauth-app.railway.app/auth/login
    - Complete Google OAuth flow
    - Copy callback URL
 
-3. **Test Database Connection**:
-   ```bash
-   # Extract code from callback and exchange for token
-   curl "https://your-oauth-app.railway.app/auth/callback?code=YOUR_CODE"
-   
-   # Set database connection
-   curl -X POST https://your-oauth-app.railway.app/connection/set \
-     -H "Authorization: Bearer YOUR_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"connection_string": "postgresql://user:pass@host:port/db"}'
-   ```
+3. **Set Database Connection**:
+   - Browser (recommended): visit `https://your-oauth-app.railway.app/connection`
+   - API:
+     ```bash
+     curl -X POST https://your-oauth-app.railway.app/connection/set \
+       -H "Authorization: Bearer YOUR_TOKEN" \
+       -H "Content-Type: application/json" \
+       -d '{"connection_string": "postgresql://user:pass@host:port/db"}'
+     ```
 
 ## Claude Desktop Configuration
 
@@ -353,8 +360,7 @@ curl https://your-oauth-app.railway.app/auth/login
 
 **Service Communication Issues**:
 ```bash
-# Verify both services are deployed and healthy
-curl https://your-mcp-app.railway.app/health
+# Verify OAuth service health
 curl https://your-oauth-app.railway.app/health
 
 # Check environment variables are set correctly

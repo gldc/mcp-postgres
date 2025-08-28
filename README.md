@@ -67,10 +67,13 @@ python postgres_server.py --oauth-only --transport streamable-http --port 8000
 ```bash
 # One-click deployment to Railway (see RAILWAY_DEPLOYMENT.md)
 # 1. Push code to GitHub
-# 2. Connect Railway to your repository  
-# 3. Add PostgreSQL service
-# 4. Configure OAuth environment variables
-# 5. Deploy automatically
+# 2. Connect Railway to your repository
+# 3. Create TWO services from this repo (same project):
+#    - Service A (MCP server): default settings (SERVICE_ROLE defaults to mcp)
+#    - Service B (OAuth companion): set SERVICE_ROLE=oauth; optionally set Environment=oauth
+# 4. Add PostgreSQL to the project (Railway sets DATABASE_URL)
+# 5. Set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / SECRET_KEY at project level
+# 6. Deploy (railway.toml uses unified launcher: `python start.py`)
 ```
 
 ## 📚 Documentation
@@ -127,12 +130,14 @@ pip install -r requirements.txt
    - Receive session token
 
 4. **Configure database connection**:
-   ```bash
-   curl -X POST http://localhost:8000/connection/set \
-     -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"connection_string": "postgresql://user:pass@host:port/db"}'
-   ```
+   - Browser: visit `http://localhost:8000/connection` (uses your session cookie)
+   - API:
+     ```bash
+     curl -X POST http://localhost:8000/connection/set \
+       -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+       -H "Content-Type: application/json" \
+       -d '{"connection_string": "postgresql://user:pass@host:port/db"}'
+     ```
 
 5. **Use database tools** - all operations now work with your authenticated connection
 
@@ -319,8 +324,7 @@ Traditional mode:
 docker run \
   -e POSTGRES_CONNECTION_STRING="postgresql://username:password@host:5432/database" \
   -p 8000:8000 \
-  mcp-postgres \
-  python postgres_server.py --transport streamable-http --host 0.0.0.0 --port 8000
+  mcp-postgres
 ```
 
 OAuth mode:
@@ -330,8 +334,15 @@ docker run \
   -e GOOGLE_CLIENT_SECRET="your_client_secret" \
   -e SECRET_KEY="your_32_char_secret" \
   -p 8000:8000 \
-  mcp-postgres \
-  python postgres_server.py --oauth-only --transport streamable-http --host 0.0.0.0 --port 8000
+  mcp-postgres
+
+Unified launcher (optional, same image):
+```bash
+# MCP
+docker run -e SERVICE_ROLE=mcp -p 8000:8000 mcp-postgres python start.py
+
+# OAuth companion
+docker run -e SERVICE_ROLE=oauth -e GOOGLE_CLIENT_ID=... -e GOOGLE_CLIENT_SECRET=... -e SECRET_KEY=... -p 8000:8000 mcp-postgres python start.py
 ```
 
 ## HTTP Client Integration
@@ -341,13 +352,13 @@ Run the server with Streamable HTTP:
 python postgres_server.py --transport streamable-http --host 0.0.0.0 --port 8000
 ```
 
-### Health Check
+### Health Check (OAuth service)
 ```bash
 curl http://localhost:8000/health
 # Expected response:
 {
   "status": "healthy",
-  "service": "PostgreSQL MCP Server with OAuth",
+  "service": "PostgreSQL MCP OAuth Companion",
   "oauth_enabled": true,
   "environment": "development"
 }
