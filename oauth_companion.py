@@ -98,9 +98,15 @@ class SessionManager:
                     email TEXT NOT NULL,
                     connection_string TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    token_version INTEGER DEFAULT 0
                 )
             """)
+            # In case the DB existed before without token_version, try to add it
+            try:
+                cursor.execute("ALTER TABLE user_sessions ADD COLUMN token_version INTEGER DEFAULT 0")
+            except Exception:
+                pass
             conn.commit()
             conn.close()
             logger.info("Session database initialized successfully")
@@ -112,11 +118,18 @@ class SessionManager:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO user_sessions 
-                (user_id, email, connection_string, last_accessed) 
+            # Preserve token_version across updates
+            cursor.execute(
+                """
+                INSERT INTO user_sessions (user_id, email, connection_string, last_accessed)
                 VALUES (?, ?, ?, ?)
-            """, (user_id, email, connection_string, datetime.now()))
+                ON CONFLICT(user_id) DO UPDATE SET
+                    email=excluded.email,
+                    connection_string=excluded.connection_string,
+                    last_accessed=excluded.last_accessed
+                """,
+                (user_id, email, connection_string, datetime.now()),
+            )
             conn.commit()
             conn.close()
             logger.info(f"Stored session for user: {email}")
@@ -129,7 +142,7 @@ class SessionManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT user_id, email, connection_string, created_at, last_accessed 
+                SELECT user_id, email, connection_string, created_at, last_accessed, token_version
                 FROM user_sessions WHERE user_id = ?
             """, (user_id,))
             row = cursor.fetchone()
@@ -141,7 +154,8 @@ class SessionManager:
                     "email": row[1],
                     "connection_string": row[2],
                     "created_at": row[3],
-                    "last_accessed": row[4]
+                    "last_accessed": row[4],
+                    "token_version": row[5] if len(row) > 5 else 0,
                 }
             return None
         except Exception as e:
@@ -162,6 +176,21 @@ class SessionManager:
             logger.info(f"Updated connection for user: {user_id}")
         except Exception as e:
             logger.error(f"Failed to update connection string: {e}")
+            raise
+
+    def increment_token_version(self, user_id: str) -> None:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE user_sessions SET token_version = COALESCE(token_version, 0) + 1, last_accessed = ? WHERE user_id = ?",
+                (datetime.now(), user_id),
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"Incremented token version for user: {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to increment token version: {e}")
             raise
 
 session_manager = SessionManager()
@@ -437,10 +466,12 @@ async def callback(request: Request):
         user_id = user_info['id']
         email = user_info['email']
         session_manager.store_user_session(user_id, email)
-        
-        # Create session token
+
+        # Fetch current token version and create session token
+        current_session = session_manager.get_user_session(user_id) or {}
+        token_version = int(current_session.get('token_version') or 0)
         serializer = URLSafeTimedSerializer(SECRET_KEY)
-        session_token = serializer.dumps({'user_id': user_id})
+        session_token = serializer.dumps({'user_id': user_id, 'v': token_version})
 
         logger.info(f"Session created for user: {email}")
 
@@ -502,9 +533,15 @@ async def auth_status(request: Request):
     try:
         serializer = URLSafeTimedSerializer(SECRET_KEY)
         data = serializer.loads(token, max_age=86400 * 7)  # 7 days
-        user_session = session_manager.get_user_session(data['user_id'])
-        
+        user_id = data.get('user_id')
+        token_version = int(data.get('v')) if 'v' in data else None
+        user_session = session_manager.get_user_session(user_id)
+
+        # Require version match if present in DB
         if user_session:
+            current_version = int(user_session.get('token_version') or 0)
+            if token_version is None or token_version != current_version:
+                return {"authenticated": False}
             return {
                 "authenticated": True,
                 "user": {
@@ -517,6 +554,43 @@ async def auth_status(request: Request):
         logger.debug(f"Token validation failed: {str(e)}")
     
     return {"authenticated": False}
+
+def _extract_token_from_request(request: Request) -> Optional[str]:
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        return auth_header[7:]
+    cookie_token = request.cookies.get('session_token')
+    if cookie_token:
+        return cookie_token
+    return None
+
+@app.post("/auth/logout")
+async def logout(request: Request):
+    """Invalidate current session by bumping per-user token version and clearing cookie."""
+    token = _extract_token_from_request(request)
+    if not token:
+        raise HTTPException(status_code=401, detail={"error": "Authentication required"})
+    try:
+        serializer = URLSafeTimedSerializer(SECRET_KEY)
+        data = serializer.loads(token, max_age=86400 * 7)
+        user_id = data.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail={"error": "Invalid session"})
+        session_manager.increment_token_version(user_id)
+        # Clear cookie
+        resp = JSONResponse({"success": True, "message": "Logged out"})
+        resp.delete_cookie(
+            key="session_token",
+            path="/",
+            samesite="Lax",
+            secure=(railway_config['environment'] == 'production'),
+        )
+        return resp
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Logout error: {e}")
+        raise HTTPException(status_code=500, detail={"error": "Logout failed"})
 
 @app.get("/connection")
 async def connection_form(request: Request):
@@ -601,6 +675,13 @@ async def set_connection(request: Request):
         serializer = URLSafeTimedSerializer(SECRET_KEY)
         data = serializer.loads(token, max_age=86400 * 7)
         user_id = data['user_id']
+        token_version = int(data.get('v')) if 'v' in data else None
+        session = session_manager.get_user_session(user_id)
+        if not session:
+            raise HTTPException(status_code=401, detail={"error": "Invalid session"})
+        current_version = int(session.get('token_version') or 0)
+        if token_version is None or token_version != current_version:
+            raise HTTPException(status_code=401, detail={"error": "Session expired"})
         
         # Support both JSON and form submissions
         connection_string = None
