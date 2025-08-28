@@ -8,7 +8,19 @@
   healthcheckTimeout = 30
   restartPolicyType = "ON_FAILURE"
 
-# For OAuth companion service (optional separate deployment)
+# For OAuth companion service (separate Railway service):
+# Create a second service in your Railway project and set its Environment to "oauth"
+# so these overrides apply to that service.
 [environments.oauth]
-  variables = {}
-  startCommand = "python oauth_companion.py --host 0.0.0.0 --port $PORT"
+  # Service-specific variables for the OAuth companion can be set here or in the UI
+  [environments.oauth.variables]
+    # GOOGLE_CLIENT_ID = "your_client_id.apps.googleusercontent.com"
+    # GOOGLE_CLIENT_SECRET = "your_client_secret"
+    # SECRET_KEY = "your_32_char_secret"
+    # REDIRECT_URI will be auto-computed from RAILWAY_PUBLIC_DOMAIN, but you can override if needed
+
+  [environments.oauth.deploy]
+    startCommand = "python oauth_companion.py --host 0.0.0.0 --port $PORT"
+    healthcheckPath = "/health"
+    healthcheckTimeout = 30
+    restartPolicyType = "ON_FAILURE"
