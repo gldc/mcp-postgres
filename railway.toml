@@ -4,8 +4,9 @@
 
 [deploy]
   startCommand = "python postgres_server.py --transport streamable-http --host 0.0.0.0 --port $PORT"
-  healthcheckPath = "/health"
-  healthcheckTimeout = 30
+  # No HTTP healthcheck for MCP server; it doesn't expose /health over HTTP
+  # healthcheckPath = "/health"
+  # healthcheckTimeout = 30
   restartPolicyType = "ON_FAILURE"
 
 # For OAuth companion service (separate Railway service):
