@@ -234,11 +234,13 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
     if _config.dsn:
         async def configure_conn(conn):
+            await conn.set_autocommit(True)
             await conn.execute("SET application_name = 'mcp-postgres'")
             if _config.statement_timeout_ms and _config.statement_timeout_ms > 0:
                 await conn.execute(
                     f"SET statement_timeout = {int(_config.statement_timeout_ms)}"
                 )
+            await conn.set_autocommit(False)
 
         pool = AsyncConnectionPool(
             conninfo=_config.dsn,
