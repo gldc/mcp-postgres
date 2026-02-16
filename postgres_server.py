@@ -262,12 +262,81 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 
 # ---------------------------------------------------------------------------
+# Auth — Optional JWT Token Verification
+# ---------------------------------------------------------------------------
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+
+try:
+    import jwt as pyjwt
+    from jwt import PyJWKClient
+    HAS_JWT = True
+except ImportError:
+    HAS_JWT = False
+
+
+class JWKSTokenVerifier:
+    """Verify JWTs against a JWKS endpoint."""
+
+    def __init__(self, jwks_url: str, audience: str, issuer: str):
+        self.jwks_url = jwks_url
+        self.audience = audience
+        self.issuer = issuer
+        self._jwk_client = PyJWKClient(jwks_url) if HAS_JWT else None
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not HAS_JWT or not self._jwk_client:
+            logger.warning("pyjwt not installed; rejecting token")
+            return None
+        try:
+            signing_key = self._jwk_client.get_signing_key_from_jwt(token)
+            payload = pyjwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256", "ES256"],
+                audience=self.audience,
+                issuer=self.issuer,
+            )
+            return AccessToken(
+                token=token,
+                client_id=payload.get("azp", payload.get("client_id", "unknown")),
+                scopes=payload.get("scope", "").split(),
+            )
+        except Exception as e:
+            logger.debug("Token verification failed: %s", e)
+            return None
+
+
+# ---------------------------------------------------------------------------
 # Server instance
 # ---------------------------------------------------------------------------
-mcp = FastMCP(
-    "PostgreSQL Explorer",
-    lifespan=app_lifespan,
-)
+def _build_server() -> FastMCP:
+    kwargs: dict[str, Any] = {
+        "name": "PostgreSQL Explorer",
+        "lifespan": app_lifespan,
+    }
+
+    if _config.auth_issuer:
+        jwks_url = _config.auth_jwks_url or f"{_config.auth_issuer.rstrip('/')}/.well-known/jwks.json"
+        kwargs["token_verifier"] = JWKSTokenVerifier(
+            jwks_url=jwks_url,
+            audience=_config.auth_audience or "",
+            issuer=_config.auth_issuer,
+        )
+        from mcp.server.auth.settings import AuthSettings
+        from pydantic import AnyHttpUrl
+        kwargs["auth"] = AuthSettings(
+            issuer_url=AnyHttpUrl(_config.auth_issuer),
+            resource_server_url=AnyHttpUrl(f"http://{_config.host}:{_config.port}"),
+            required_scopes=[],
+        )
+        logger.info("Auth enabled — issuer: %s", _config.auth_issuer)
+    else:
+        logger.info("Auth disabled — shared connection mode")
+
+    return FastMCP(**kwargs)
+
+
+mcp = _build_server()
 
 
 # ---------------------------------------------------------------------------

@@ -138,3 +138,25 @@ def test_enforce_permissions_skips_when_no_user():
     perms = Permissions()
     result = _enforce_permissions(perms, None, "DELETE FROM users")
     assert result is None  # No user = no enforcement
+
+
+# ---------------------------------------------------------------------------
+# Auth tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_jwt_verifier_rejects_invalid():
+    from postgres_server import JWKSTokenVerifier
+    verifier = JWKSTokenVerifier(
+        jwks_url="https://example.com/.well-known/jwks.json",
+        audience="test",
+        issuer="https://example.com",
+    )
+    result = await verifier.verify_token("invalid.token.here")
+    assert result is None
+
+
+def test_server_without_auth_config():
+    """Server creates without auth when env vars not set."""
+    from postgres_server import _config
+    # In test env, auth env vars are not set
+    assert _config.auth_issuer is None
