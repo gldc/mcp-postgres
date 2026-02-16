@@ -597,6 +597,100 @@ async def find_relationships(
         return f"Error: {e}"
 
 
+@mcp.tool()
+async def server_info(ctx: Context) -> str:
+    """Return server configuration and capability info."""
+    app: AppContext = ctx.request_context.lifespan_context
+    import psycopg
+    return json.dumps({
+        "name": "PostgreSQL Explorer",
+        "version": "2.0.0",
+        "readonly": app.config.readonly,
+        "statement_timeout_ms": app.config.statement_timeout_ms,
+        "auth_enabled": app.config.auth_issuer is not None,
+        "pool_configured": app.pool is not None,
+        "transport": app.config.transport,
+        "psycopg_version": getattr(psycopg, "__version__", None),
+    })
+
+
+@mcp.tool()
+async def db_identity(ctx: Context) -> str:
+    """Return current database identity: db name, user, host, port, version."""
+    app: AppContext = ctx.request_context.lifespan_context
+    if app.pool is None:
+        return json.dumps({})
+
+    try:
+        async with app.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT current_database() AS database, current_user AS \"user\", "
+                    "inet_server_addr()::text AS host, inet_server_port() AS port"
+                )
+                info = dict(await cur.fetchone() or {})
+
+                await cur.execute("SELECT current_schemas(true) AS search_path")
+                row = await cur.fetchone()
+                if row:
+                    info["search_path"] = row["search_path"]
+
+                await cur.execute(
+                    "SELECT name, setting FROM pg_settings "
+                    "WHERE name IN ('server_version', 'cluster_name')"
+                )
+                for r in await cur.fetchall():
+                    info[r["name"]] = r["setting"]
+
+        return json.dumps(info, default=str)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# MCP Resources
+# ---------------------------------------------------------------------------
+@mcp.resource("table://{schema}/{table}")
+async def table_resource(schema: str, table: str, ctx: Context) -> str:
+    """Read rows from a table (max 100)."""
+    app: AppContext = ctx.request_context.lifespan_context
+    if app.pool is None:
+        return json.dumps([])
+    try:
+        async with app.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f'SELECT * FROM "{schema}"."{table}" LIMIT 100'
+                )
+                rows = [dict(r) for r in await cur.fetchall()]
+        return json.dumps(rows, default=str)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# MCP Prompts
+# ---------------------------------------------------------------------------
+@mcp.prompt()
+def write_safe_select() -> str:
+    """Guidelines for writing safe, read-only SELECT queries."""
+    return (
+        "Write a safe, read-only SELECT using parameterized placeholders. "
+        "Avoid DML/DDL. Prefer explicit column lists, add LIMIT, "
+        "and filter with indexed columns when possible."
+    )
+
+
+@mcp.prompt()
+def explain_plan_tips() -> str:
+    """Tips for reading EXPLAIN ANALYZE output."""
+    return (
+        "Use EXPLAIN (ANALYZE, BUFFERS, VERBOSE) to inspect plans. "
+        "Check seq vs index scans, join order, row estimates, and sort/hash nodes. "
+        "Consider indexes or query rewrites for slow operations."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------

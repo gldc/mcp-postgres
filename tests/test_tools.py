@@ -31,3 +31,10 @@ async def test_list_tables_no_dsn():
 
     result = await _query_impl(pool=None, sql="SELECT 1", readonly=False)
     assert "not configured" in result.lower()
+
+
+def test_server_info_registered():
+    """server_info tool is registered."""
+    from postgres_server import server_info, db_identity
+    assert callable(server_info)
+    assert callable(db_identity)
