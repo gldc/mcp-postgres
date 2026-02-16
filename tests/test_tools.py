@@ -38,3 +38,103 @@ def test_server_info_registered():
     from postgres_server import server_info, db_identity
     assert callable(server_info)
     assert callable(db_identity)
+
+
+# ---------------------------------------------------------------------------
+# Permissions tests
+# ---------------------------------------------------------------------------
+from postgres_server import (
+    Permissions, RolePermissions, load_permissions,
+    check_permission, extract_tables_from_sql,
+    _enforce_permissions,
+)
+
+
+def test_load_permissions_from_yaml(tmp_path):
+    p = tmp_path / "perms.yaml"
+    p.write_text("""
+roles:
+  analyst:
+    schemas: ["public"]
+    tables: "*"
+    operations: ["select"]
+  admin:
+    schemas: ["public", "internal"]
+    tables: "*"
+    operations: ["select", "insert", "update", "delete"]
+users:
+  alice@co.com:
+    role: admin
+  _default: analyst
+""")
+    perms = load_permissions(str(p))
+    assert "analyst" in perms.roles
+    assert "admin" in perms.roles
+    assert perms.users["alice@co.com"] == "admin"
+    assert perms.default_role == "analyst"
+
+
+def test_check_permission_allows_select():
+    role = RolePermissions(schemas=["public"], tables="*", operations=["select"])
+    result = check_permission(role, "select", "public", "users")
+    assert result is None  # None means allowed
+
+
+def test_check_permission_denies_schema():
+    role = RolePermissions(schemas=["public"], tables="*", operations=["select"])
+    result = check_permission(role, "select", "internal", "secrets")
+    assert result is not None
+    assert "internal" in result
+
+
+def test_check_permission_denies_operation():
+    role = RolePermissions(schemas=["public"], tables="*", operations=["select"])
+    result = check_permission(role, "delete", "public", "users")
+    assert result is not None
+    assert "delete" in result
+
+
+def test_check_permission_table_allowlist():
+    role = RolePermissions(schemas=["public"], tables=["products", "categories"], operations=["select"])
+    assert check_permission(role, "select", "public", "products") is None
+    result = check_permission(role, "select", "public", "users")
+    assert result is not None
+
+
+def test_extract_tables_basic():
+    tables = extract_tables_from_sql("SELECT * FROM public.users WHERE id = 1")
+    assert ("public", "users") in tables or "users" in [t[1] for t in tables]
+
+
+def test_extract_tables_join():
+    tables = extract_tables_from_sql(
+        "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id"
+    )
+    table_names = [t[1] for t in tables]
+    assert "users" in table_names
+    assert "orders" in table_names
+
+
+def test_enforce_permissions_blocks_disallowed_schema():
+    perms = Permissions(
+        roles={"restricted": RolePermissions(schemas=["public"], tables="*", operations=["select"])},
+        users={"bob": "restricted"},
+    )
+    result = _enforce_permissions(perms, "bob", "SELECT * FROM internal.secrets")
+    assert result is not None
+    assert "internal" in result
+
+
+def test_enforce_permissions_allows_valid_query():
+    perms = Permissions(
+        roles={"analyst": RolePermissions(schemas=["public"], tables="*", operations=["select"])},
+        users={"alice": "analyst"},
+    )
+    result = _enforce_permissions(perms, "alice", "SELECT * FROM public.users")
+    assert result is None
+
+
+def test_enforce_permissions_skips_when_no_user():
+    perms = Permissions()
+    result = _enforce_permissions(perms, None, "DELETE FROM users")
+    assert result is None  # No user = no enforcement

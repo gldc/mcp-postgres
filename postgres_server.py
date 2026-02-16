@@ -138,6 +138,81 @@ def load_permissions(path: Optional[str]) -> Permissions:
     return Permissions(roles=roles, users=users, default_role=default_role)
 
 
+def extract_operation(sql: str) -> str:
+    """Extract the SQL operation type from the first keyword."""
+    token = sql.lstrip().split(None, 1)[0].lower() if sql.strip() else ""
+    if token in {"select", "with", "show", "values", "explain"}:
+        return "select"
+    return token  # insert, update, delete, create, drop, etc.
+
+
+def extract_tables_from_sql(sql: str) -> list[tuple[str, str]]:
+    """Extract (schema, table) pairs from SQL. Best-effort regex, not a full parser."""
+    tables = []
+    pattern = r'(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+("?(\w+)"?\s*\.\s*"?(\w+)"?|"?(\w+)"?)'
+    for m in re.finditer(pattern, sql, re.IGNORECASE):
+        if m.group(2) and m.group(3):
+            tables.append((m.group(2), m.group(3)))
+        elif m.group(4):
+            tables.append(("public", m.group(4)))
+    return tables
+
+
+def check_permission(
+    role: RolePermissions,
+    operation: str,
+    schema: str,
+    table: str,
+) -> Optional[str]:
+    """Check if a role allows an operation on schema.table.
+
+    Returns None if allowed, or an error message if denied.
+    """
+    if operation not in role.operations:
+        return f"Access denied: operation '{operation}' is not allowed for your role."
+
+    if schema not in role.schemas:
+        return f"Access denied: schema '{schema}' is not in your allowlist."
+
+    if role.tables != "*":
+        if isinstance(role.tables, list) and table not in role.tables:
+            return f"Access denied: table '{schema}.{table}' is not in your allowlist."
+
+    return None
+
+
+def _enforce_permissions(
+    permissions: Permissions,
+    user_id: Optional[str],
+    sql: str,
+) -> Optional[str]:
+    """If user_id is set and permissions are configured, check access.
+
+    Returns None if allowed, or an error message string.
+    """
+    if user_id is None:
+        return None  # No auth, no enforcement
+    role = permissions.get_role_for_user(user_id)
+    if role is None:
+        return "Access denied: no role assigned and no default role configured."
+
+    operation = extract_operation(sql)
+    tables = extract_tables_from_sql(sql)
+
+    if not tables:
+        # Can't determine tables — allow if operation is permitted
+        if operation not in role.operations:
+            return f"Access denied: operation '{operation}' is not allowed."
+        return None
+
+    for schema, table in tables:
+        error = check_permission(role, operation, schema, table)
+        if error:
+            return error
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # App context & lifespan
 # ---------------------------------------------------------------------------
