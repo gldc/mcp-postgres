@@ -196,6 +196,112 @@ mcp = FastMCP(
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _is_select_like(sql: str) -> bool:
+    token = sql.lstrip().split(None, 1)[0].lower() if sql.strip() else ""
+    return token in {"select", "with", "show", "values", "explain"}
+
+
+def _format_markdown_table(rows: list[dict[str, Any]], row_limit: int) -> str:
+    if not rows:
+        return "No results found"
+    keys = list(rows[0].keys())
+    lines = [" | ".join(keys), " | ".join(["---"] * len(keys))]
+    truncated = len(rows) > row_limit
+    display = rows[:row_limit]
+    for row in display:
+        vals = []
+        for k in keys:
+            v = row.get(k)
+            if v is None:
+                vals.append("NULL")
+            elif isinstance(v, (bytes, bytearray)):
+                vals.append(v.decode("utf-8", errors="replace"))
+            else:
+                vals.append(str(v))
+        lines.append(" | ".join(vals))
+    if truncated:
+        lines.append(f"\n(Truncated at {row_limit} rows)")
+    return "\n".join(lines)
+
+
+async def _query_impl(
+    pool: Optional[AsyncConnectionPool],
+    sql: str,
+    readonly: bool,
+    parameters: Optional[list[Any]] = None,
+    row_limit: int = 500,
+    format: str = "markdown",
+) -> str | list[dict[str, Any]]:
+    if pool is None:
+        return "Database not configured. Provide --conn or set DATABASE_URL."
+
+    if readonly and not _is_select_like(sql):
+        return "Read-only mode: only SELECT queries are allowed."
+
+    as_json = format.lower() == "json"
+
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            t0 = time.time()
+            await cur.execute(sql, parameters)
+
+            if cur.description is None:
+                return (
+                    [] if as_json
+                    else f"Query executed. Rows affected: {cur.rowcount}"
+                )
+
+            rows = await cur.fetchmany(row_limit + 1)
+            rows_dicts = [dict(r) for r in rows]
+            duration_ms = int((time.time() - t0) * 1000)
+            logger.info("Query: %d rows in %dms", len(rows_dicts), duration_ms)
+
+            if as_json:
+                return rows_dicts[:row_limit]
+
+            return _format_markdown_table(rows_dicts, row_limit)
+
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+@mcp.tool()
+async def query(
+    sql: str,
+    ctx: Context,
+    parameters: Optional[list[Any]] = None,
+    row_limit: int = 500,
+    format: str = "markdown",
+) -> str:
+    """Execute a SQL query. Returns markdown table by default, or JSON rows if format='json'.
+
+    Args:
+        sql: SQL statement to execute.
+        parameters: Positional parameters for parameterized queries.
+        row_limit: Maximum rows to return (1-10000, default 500).
+        format: Output format — 'markdown' or 'json'.
+    """
+    app: AppContext = ctx.request_context.lifespan_context
+    try:
+        result = await _query_impl(
+            pool=app.pool,
+            sql=sql,
+            readonly=app.config.readonly,
+            parameters=parameters,
+            row_limit=max(1, min(row_limit, 10000)),
+            format=format,
+        )
+        if isinstance(result, list):
+            return json.dumps(result, default=str)
+        return result
+    except Exception as e:
+        logger.error("Query error: %s", e)
+        return f"Query error: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
