@@ -1,7 +1,5 @@
 """PostgreSQL MCP Server — production-ready, async, with optional auth."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import logging
@@ -96,7 +94,7 @@ def load_config() -> ServerConfig:
 @dataclass
 class RolePermissions:
     schemas: list[str] = field(default_factory=lambda: ["public"])
-    tables: str | list[str] = "*"  # "*" means all tables in allowed schemas
+    tables: Any = "*"  # str "*" means all tables, or list[str] for explicit allowlist
     operations: list[str] = field(default_factory=lambda: ["select"])
 
 
@@ -283,7 +281,7 @@ class JWKSTokenVerifier:
         self.issuer = issuer
         self._jwk_client = PyJWKClient(jwks_url) if HAS_JWT else None
 
-    async def verify_token(self, token: str) -> AccessToken | None:
+    async def verify_token(self, token: str) -> Optional[AccessToken]:
         if not HAS_JWT or not self._jwk_client:
             logger.warning("pyjwt not installed; rejecting token")
             return None
@@ -379,7 +377,7 @@ async def _query_impl(
     parameters: Optional[list[Any]] = None,
     row_limit: int = 500,
     format: str = "markdown",
-) -> str | list[dict[str, Any]]:
+) -> Any:
     if pool is None:
         return "Database not configured. Provide --conn or set DATABASE_URL."
 
