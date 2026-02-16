@@ -312,6 +312,8 @@ def _build_server() -> FastMCP:
     kwargs: dict[str, Any] = {
         "name": "PostgreSQL Explorer",
         "lifespan": app_lifespan,
+        "host": _config.host,
+        "port": _config.port,
     }
 
     if _config.auth_issuer:
@@ -856,8 +858,4 @@ def explain_plan_tips() -> str:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     logger.info("Starting PostgreSQL MCP server — transport=%s", _config.transport)
-    mcp.run(
-        transport=_config.transport,
-        host=_config.host,
-        port=_config.port,
-    )
+    mcp.run(transport=_config.transport)
