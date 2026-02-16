@@ -57,9 +57,7 @@ Thumbs.db
 # Project specific
 *.env
 config.ini
-credentials.json 
+credentials.json
 .cursor/
 glama/
-.env.example
-AGENTS.md
-CHANGELOG.md
+permissions.yaml
