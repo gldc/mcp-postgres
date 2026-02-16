@@ -12,7 +12,7 @@
 
 ---
 
-### Task 1: Clean Up — Delete Legacy Files and Update Dependencies
+### Task 1: Clean Up — Delete Legacy Files and Update Dependencies ✅ DONE
 
 **Files:**
 - Delete: `oauth_companion.py`
@@ -75,7 +75,7 @@ git commit -m "chore: remove legacy OAuth files and update dependencies for v2 r
 
 ---
 
-### Task 2: Scaffold — Empty Server with Lifespan and Config
+### Task 2: Scaffold — Empty Server with Lifespan and Config ✅ DONE
 
 This task creates the new `postgres_server.py` skeleton: config parsing, lifespan, pool setup, and the `mcp.run()` entrypoint. No tools yet.
 
@@ -354,7 +354,7 @@ git commit -m "feat: scaffold MCPServer v2 with lifespan, config, and pool"
 
 ---
 
-### Task 3: Core Query Tool
+### Task 3: Core Query Tool ✅ DONE
 
 The unified `query` tool that replaces all legacy query variants.
 
@@ -530,7 +530,7 @@ git commit -m "feat: add unified async query tool with markdown/json output"
 
 ---
 
-### Task 4: Schema and Table Introspection Tools
+### Task 4: Schema and Table Introspection Tools ✅ DONE
 
 **Files:**
 - Modify: `postgres_server.py`
@@ -883,7 +883,7 @@ git commit -m "feat: add schema/table introspection tools with pagination"
 
 ---
 
-### Task 5: Info Tools, Resources, and Prompts
+### Task 5: Info Tools, Resources, and Prompts ✅ DONE
 
 **Files:**
 - Modify: `postgres_server.py`
@@ -1028,7 +1028,7 @@ git commit -m "feat: add server_info, db_identity, MCP resources, and prompts"
 
 ---
 
-### Task 6: Permissions Enforcement
+### Task 6: Permissions Enforcement ✅ DONE
 
 **Files:**
 - Modify: `postgres_server.py`
@@ -1254,7 +1254,7 @@ git commit -m "feat: add config-file permissions with schema/table/operation enf
 
 ---
 
-### Task 7: Token Verification (Optional Auth)
+### Task 7: Token Verification (Optional Auth) ✅ DONE
 
 **Files:**
 - Modify: `postgres_server.py`
@@ -1393,7 +1393,7 @@ git commit -m "feat: add optional JWKS token verification for external IdP auth"
 
 ---
 
-### Task 8: Wire Permissions into Query Tool
+### Task 8: Wire Permissions into Query Tool ✅ DONE
 
 **Files:**
 - Modify: `postgres_server.py`
@@ -1520,7 +1520,7 @@ git commit -m "feat: wire permission enforcement into query tool"
 
 ---
 
-### Task 9: Update Config Files
+### Task 9: Update Config Files ✅ DONE
 
 **Files:**
 - Modify: `railway.toml`
@@ -1620,7 +1620,7 @@ git commit -m "chore: update config files for v2 single-service architecture"
 
 ---
 
-### Task 10: Update Tests and Documentation
+### Task 10: Update Tests and Documentation ✅ DONE
 
 **Files:**
 - Modify: `tests/test_tools.py` — final cleanup, ensure all tests pass

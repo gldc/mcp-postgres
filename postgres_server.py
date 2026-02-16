@@ -17,6 +17,7 @@ import yaml
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from mcp.server.auth.provider import AccessToken
 from mcp.server.fastmcp import FastMCP, Context
 
 # ---------------------------------------------------------------------------
@@ -264,8 +265,6 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 # ---------------------------------------------------------------------------
 # Auth — Optional JWT Token Verification
 # ---------------------------------------------------------------------------
-from mcp.server.auth.provider import AccessToken, TokenVerifier
-
 try:
     import jwt as pyjwt
     from jwt import PyJWKClient

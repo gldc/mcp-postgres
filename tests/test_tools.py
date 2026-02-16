@@ -43,7 +43,7 @@ def test_server_info_registered():
 # ---------------------------------------------------------------------------
 # Permissions tests
 # ---------------------------------------------------------------------------
-from postgres_server import (
+from postgres_server import (  # noqa: E402
     Permissions, RolePermissions, load_permissions,
     check_permission, extract_tables_from_sql,
     _enforce_permissions,
