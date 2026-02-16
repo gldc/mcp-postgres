@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A PostgreSQL MCP (Model Context Protocol) server that lets AI agents interact with Postgres databases. It exposes database tools (query, list tables/schemas, describe tables, foreign keys) via the FastMCP framework. An optional OAuth companion service (Google OAuth2) enables multi-user authentication with per-user database connections.
+A PostgreSQL MCP (Model Context Protocol) server that lets AI agents interact with Postgres databases. It exposes database tools (query, list tables/schemas, describe tables, foreign keys, relationships) via the FastMCP framework with async connection pooling. Optional JWT/JWKS auth with YAML-based permissions for multi-user environments.
 
 ## Commands
 
@@ -20,52 +20,54 @@ python postgres_server.py --conn "postgresql://user:pass@host:5432/db"
 # Run MCP server (HTTP transport)
 python postgres_server.py --transport streamable-http --host 127.0.0.1 --port 8000
 
-# Run OAuth companion service
-python oauth_companion.py --port 8001
-
-# Railway unified launcher (uses SERVICE_ROLE env: "mcp" or "oauth")
-python start.py
-
 # Tests
 pytest -q
-pytest tests/test_server_tools.py          # single test file
-pytest tests/test_server_tools.py::test_run_query_no_dsn  # single test
+pytest tests/test_tools.py                          # unit tests
+pytest tests/test_tools.py::test_query_no_dsn_async  # single test
 
-# Linting (optional)
+# Linting
 ruff check .
-black .
 ```
 
 ## Architecture
 
-**Two services, one repo:**
+**Single-file async MCP server:**
 
-- `postgres_server.py` — The MCP server. Uses `FastMCP` from `mcp[cli]` to register tools. Connects to Postgres via `psycopg`. Supports three transports: `stdio` (local), `sse`, `streamable-http` (remote/Railway). Has both legacy tool signatures (`query`, `query_json`) and typed Pydantic-input versions (`run_query`, `run_query_json`). Auth-aware variants (`run_query_auth`, `run_query_json_auth`) validate session tokens and fetch per-user DSNs from the OAuth companion.
+- `postgres_server.py` — Uses `FastMCP` from `mcp[cli]` to register tools. Connects to Postgres via `psycopg` with `AsyncConnectionPool` from `psycopg_pool`. Supports three transports: `stdio` (local), `sse`, `streamable-http` (remote/Railway). Lifespan context manager owns the pool, config, and permissions.
 
-- `oauth_companion.py` — FastAPI service for Google OAuth2. Handles `/auth/login`, `/auth/callback`, `/auth/status`, `/auth/logout`. Stores sessions in a local SQLite DB (`oauth_sessions.db`). Provides `/connection/set` for users to configure their Postgres DSN after authenticating. Token versioning supports logout/invalidation.
+**Key components:**
+- `ServerConfig` — Dataclass parsed from CLI args + env vars
+- `AppContext` — Lifespan-scoped context holding pool, config, permissions
+- `Permissions` / `RolePermissions` — YAML-based role/schema/table/operation enforcement
+- `JWKSTokenVerifier` — Optional JWT verification against external IdP JWKS endpoint
 
-- `start.py` — Railway deployment entrypoint. Routes to either service based on `SERVICE_ROLE` env var via `os.execv`.
+**Tools:** `query`, `list_schemas`, `list_tables`, `describe_table`, `get_foreign_keys`, `find_relationships`, `server_info`, `db_identity`
 
-**Session tokens** use `itsdangerous.URLSafeTimedSerializer` with `SECRET_KEY`, 7-day expiry, and a per-user `token_version` for revocation.
+**Two modes:**
+- **No-auth (default):** Shared connection pool, no permission checks
+- **Auth-enabled:** JWT tokens verified via JWKS, permissions enforced per-user from `permissions.yaml`
 
 ## Key Environment Variables
 
 | Variable | Purpose |
 |---|---|
-| `POSTGRES_CONNECTION_STRING` / `DATABASE_URL` | Default DB connection (Railway provides `DATABASE_URL`) |
+| `DATABASE_URL` / `POSTGRES_CONNECTION_STRING` | Default DB connection |
 | `POSTGRES_READONLY` | `true` to restrict to SELECT-like queries |
 | `POSTGRES_STATEMENT_TIMEOUT_MS` | Query timeout in ms |
 | `MCP_TRANSPORT` | `stdio`, `sse`, or `streamable-http` |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth credentials |
-| `SECRET_KEY` | Token signing key |
-| `OAUTH_SERVICE_URL` | URL of OAuth companion (for MCP server to validate tokens) |
-| `SERVICE_ROLE` | `mcp` or `oauth` (Railway launcher routing) |
+| `MCP_HOST` / `MCP_PORT` | Server bind address (default 127.0.0.1:8000) |
+| `MCP_POOL_MIN` / `MCP_POOL_MAX` | Connection pool sizing (default 2-10) |
+| `MCP_AUTH_ISSUER` | JWT issuer URL (enables auth mode) |
+| `MCP_AUTH_AUDIENCE` | Expected JWT audience |
+| `MCP_AUTH_JWKS_URL` | JWKS endpoint (auto-derived from issuer if not set) |
+| `MCP_PERMISSIONS_FILE` | Path to permissions.yaml |
 
 ## Testing Conventions
 
-- Tests must pass without a database connection. All tools should return friendly empty/notice results when no DSN is configured.
-- Tests import directly from `postgres_server` and set `CONNECTION_STRING = None` to simulate no-DSN mode.
-- The test file references some tools/models (`list_schemas_json`, `ListSchemasPageInput`, etc.) that exist in `postgres_server_original.py` but were removed in the OAuth refactor of `postgres_server.py` — some tests may fail against the current server.
+- Tests must pass without a database connection. All tools return friendly empty/notice results when no DSN is configured.
+- `tests/conftest.py` clears DSN env vars to simulate no-DSN mode.
+- `tests/test_tools.py` — Unit tests for tools, permissions, and auth.
+- `tests/test_integration.py` — Integration tests (skipped unless `DATABASE_URL` is set).
 
 ## Important Operational Note
 
