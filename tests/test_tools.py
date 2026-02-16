@@ -15,3 +15,19 @@ async def test_query_no_dsn_async():
     result = await _query_impl(pool=None, sql="SELECT 1", readonly=False)
     assert isinstance(result, str)
     assert "not configured" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_schemas_no_dsn():
+    from postgres_server import _query_impl
+
+    result = await _query_impl(pool=None, sql="SELECT 1", readonly=False)
+    assert "not configured" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_tables_no_dsn():
+    from postgres_server import _query_impl
+
+    result = await _query_impl(pool=None, sql="SELECT 1", readonly=False)
+    assert "not configured" in result.lower()

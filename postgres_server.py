@@ -301,6 +301,302 @@ async def query(
         return f"Query error: {e}"
 
 
+@mcp.tool()
+async def list_schemas(
+    ctx: Context,
+    include_system: bool = False,
+    name_pattern: Optional[str] = None,
+    page_size: int = 500,
+    cursor: Optional[str] = None,
+) -> str:
+    """List database schemas as JSON.
+
+    Args:
+        include_system: Include pg_* and information_schema.
+        name_pattern: Filter by ILIKE pattern (use % and _).
+        page_size: Results per page (default 500).
+        cursor: Pagination cursor from previous call.
+    """
+    import base64
+    app: AppContext = ctx.request_context.lifespan_context
+    if app.pool is None:
+        return json.dumps({"items": [], "next_cursor": None})
+
+    offset = 0
+    if cursor:
+        try:
+            offset = json.loads(base64.b64decode(cursor))["offset"]
+        except Exception:
+            offset = 0
+
+    conditions = []
+    params: list[Any] = []
+    if not include_system:
+        conditions.append("n.nspname NOT LIKE 'pg_%' AND n.nspname != 'information_schema'")
+    if name_pattern:
+        conditions.append("n.nspname ILIKE %s")
+        params.append(name_pattern)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    limit = page_size + 1
+    params.extend([limit, offset])
+
+    sql = f"""
+    SELECT n.nspname AS schema_name,
+           pg_get_userbyid(n.nspowner) AS owner,
+           has_schema_privilege(n.nspname, 'USAGE') AS has_usage
+    FROM pg_namespace n
+    {where}
+    ORDER BY n.nspname
+    LIMIT %s OFFSET %s
+    """
+
+    try:
+        async with app.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                rows = [dict(r) for r in await cur.fetchall()]
+
+        next_cursor = None
+        if len(rows) > page_size:
+            rows = rows[:page_size]
+            next_cursor = base64.b64encode(
+                json.dumps({"offset": offset + page_size}).encode()
+            ).decode()
+
+        return json.dumps({"items": rows, "next_cursor": next_cursor}, default=str)
+    except Exception as e:
+        logger.error("list_schemas error: %s", e)
+        return json.dumps({"items": [], "next_cursor": None, "error": str(e)})
+
+
+@mcp.tool()
+async def list_tables(
+    ctx: Context,
+    schema: Optional[str] = None,
+    name_pattern: Optional[str] = None,
+    table_types: Optional[list[str]] = None,
+    page_size: int = 500,
+    cursor: Optional[str] = None,
+) -> str:
+    """List tables in a schema as JSON.
+
+    Args:
+        schema: Schema name (defaults to current schema).
+        name_pattern: Filter by ILIKE pattern.
+        table_types: Filter by type, e.g. ['BASE TABLE', 'VIEW'].
+        page_size: Results per page.
+        cursor: Pagination cursor.
+    """
+    import base64
+    app: AppContext = ctx.request_context.lifespan_context
+    if app.pool is None:
+        return json.dumps({"items": [], "next_cursor": None})
+
+    offset = 0
+    if cursor:
+        try:
+            offset = json.loads(base64.b64decode(cursor))["offset"]
+        except Exception:
+            offset = 0
+
+    eff_schema = schema
+    if not eff_schema:
+        try:
+            async with app.pool.connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute("SELECT current_schema() AS s")
+                    row = await cur.fetchone()
+                    eff_schema = row["s"] if row else "public"
+        except Exception:
+            eff_schema = "public"
+
+    conditions = ["table_schema = %s"]
+    params: list[Any] = [eff_schema]
+    if name_pattern:
+        conditions.append("table_name ILIKE %s")
+        params.append(name_pattern)
+    if table_types:
+        placeholders = ",".join(["%s"] * len(table_types))
+        conditions.append(f"table_type IN ({placeholders})")
+        params.extend(table_types)
+
+    where = " AND ".join(conditions)
+    limit = page_size + 1
+    params.extend([limit, offset])
+
+    sql = f"""
+    SELECT table_name, table_type
+    FROM information_schema.tables
+    WHERE {where}
+    ORDER BY table_name
+    LIMIT %s OFFSET %s
+    """
+
+    try:
+        async with app.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                rows = [dict(r) for r in await cur.fetchall()]
+
+        next_cursor = None
+        if len(rows) > page_size:
+            rows = rows[:page_size]
+            next_cursor = base64.b64encode(
+                json.dumps({"offset": offset + page_size}).encode()
+            ).decode()
+
+        return json.dumps({"items": rows, "next_cursor": next_cursor}, default=str)
+    except Exception as e:
+        logger.error("list_tables error: %s", e)
+        return json.dumps({"items": [], "next_cursor": None, "error": str(e)})
+
+
+@mcp.tool()
+async def describe_table(
+    table_name: str,
+    ctx: Context,
+    schema: Optional[str] = None,
+) -> str:
+    """Get column details for a table.
+
+    Args:
+        table_name: Table to describe.
+        schema: Schema name (defaults to current schema).
+    """
+    app: AppContext = ctx.request_context.lifespan_context
+    if app.pool is None:
+        return "Database not configured. Provide --conn or set DATABASE_URL."
+
+    eff_schema = schema or "public"
+    sql = """
+    SELECT column_name, data_type, is_nullable, column_default, character_maximum_length
+    FROM information_schema.columns
+    WHERE table_schema = %s AND table_name = %s
+    ORDER BY ordinal_position
+    """
+    try:
+        async with app.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, [eff_schema, table_name])
+                rows = [dict(r) for r in await cur.fetchall()]
+        return json.dumps(rows, default=str)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def get_foreign_keys(
+    table_name: str,
+    ctx: Context,
+    schema: Optional[str] = None,
+) -> str:
+    """Get foreign key constraints for a table.
+
+    Args:
+        table_name: Table to inspect.
+        schema: Schema name (defaults to public).
+    """
+    app: AppContext = ctx.request_context.lifespan_context
+    if app.pool is None:
+        return "Database not configured. Provide --conn or set DATABASE_URL."
+
+    eff_schema = schema or "public"
+    sql = """
+    SELECT tc.constraint_name,
+           kcu.column_name AS fk_column,
+           ccu.table_schema AS referenced_schema,
+           ccu.table_name AS referenced_table,
+           ccu.column_name AS referenced_column
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.referential_constraints rc
+        ON tc.constraint_name = rc.constraint_name
+    JOIN information_schema.constraint_column_usage ccu
+        ON rc.unique_constraint_name = ccu.constraint_name
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = %s AND tc.table_name = %s
+    ORDER BY tc.constraint_name, kcu.ordinal_position
+    """
+    try:
+        async with app.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, [eff_schema, table_name])
+                rows = [dict(r) for r in await cur.fetchall()]
+        return json.dumps(rows, default=str)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def find_relationships(
+    table_name: str,
+    ctx: Context,
+    schema: Optional[str] = None,
+) -> str:
+    """Find explicit foreign keys and implied relationships for a table.
+
+    Args:
+        table_name: Table to analyze.
+        schema: Schema name (defaults to public).
+    """
+    app: AppContext = ctx.request_context.lifespan_context
+    if app.pool is None:
+        return "Database not configured. Provide --conn or set DATABASE_URL."
+
+    eff_schema = schema or "public"
+
+    explicit_sql = """
+    SELECT kcu.column_name,
+           ccu.table_name AS foreign_table,
+           ccu.column_name AS foreign_column,
+           'explicit_fk' AS relationship_type
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = %s AND tc.table_name = %s
+    """
+
+    implied_sql = """
+    WITH source_cols AS (
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = %s
+            AND (column_name LIKE '%%_id' OR column_name LIKE '%%_fk')
+    )
+    SELECT sc.column_name,
+           t.table_name AS foreign_table,
+           'id' AS foreign_column,
+           CASE
+               WHEN sc.column_name = t.table_name || '_id' THEN 'strong_implied'
+               ELSE 'possible_implied'
+           END AS relationship_type
+    FROM source_cols sc
+    CROSS JOIN information_schema.tables t
+    JOIN information_schema.columns c
+        ON c.table_schema = t.table_schema AND c.table_name = t.table_name AND c.column_name = 'id'
+    WHERE t.table_schema = %s AND t.table_name != %s
+        AND sc.data_type = c.data_type
+    """
+
+    try:
+        async with app.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(explicit_sql, [eff_schema, table_name])
+                explicit = [dict(r) for r in await cur.fetchall()]
+
+                await cur.execute(implied_sql, [eff_schema, table_name, eff_schema, table_name])
+                implied = [dict(r) for r in await cur.fetchall()]
+
+        return json.dumps({"explicit": explicit, "implied": implied}, default=str)
+    except Exception as e:
+        return f"Error: {e}"
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
