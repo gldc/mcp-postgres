@@ -428,6 +428,23 @@ async def query(
         format: Output format — 'markdown' or 'json'.
     """
     app: AppContext = ctx.request_context.lifespan_context
+
+    # Permission check (only when auth is active)
+    user_id = None
+    if app.config.auth_issuer:
+        meta = getattr(ctx, "request_context", None)
+        auth_token = getattr(meta, "access_token", None) if meta else None
+        if auth_token:
+            try:
+                payload = pyjwt.decode(auth_token.token, options={"verify_signature": False})
+                user_id = payload.get("sub")
+            except Exception:
+                pass
+
+        perm_error = _enforce_permissions(app.permissions, user_id, sql)
+        if perm_error:
+            return perm_error
+
     try:
         result = await _query_impl(
             pool=app.pool,
