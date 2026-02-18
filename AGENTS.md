@@ -1,51 +1,43 @@
 # Repository Guidelines
 
-These guidelines help contributors work effectively on the PostgreSQL MCP server in this repo.
+Concise guidance for contributing to the PostgreSQL MCP server in this repo.
 
 ## Project Structure & Module Organization
-- Root module: `postgres_server.py` — FastMCP server exposing PostgreSQL tools.
-- Config: `.env` (optional), `smithery.yaml` (publishing metadata).
-- Packaging/infra: `requirements.txt`, `Dockerfile`.
-- Docs: `README.md`, this `AGENTS.md`.
-- No dedicated `src/` or `tests/` directories yet; keep server logic cohesive and small, or start a `src/` layout if adding modules.
+- Root: `postgres_server.py` (FastMCP server and tools), `README.md`, `requirements.txt`, `smithery.yaml`.
+- Tests: `tests/test_tools.py` (unit), `tests/test_integration.py` (requires DB).
+- Config: `.env.example`, `permissions.yaml.example`, `railway.toml`, `smithery.yaml`.
 
 ## Build, Test, and Development Commands
 - Create env: `python -m venv .venv && source .venv/bin/activate`
-- Install deps: `pip install -r requirements.txt`
-- Run server (no DB): `python postgres_server.py`
-- Run with DB: `POSTGRES_CONNECTION_STRING="postgresql://user:pass@host:5432/db" python postgres_server.py`
-- Docker build/run: `docker build -t mcp-postgres .` then `docker run -e POSTGRES_CONNECTION_STRING=... -p 8000:8000 mcp-postgres`
+- Install runtime deps: `pip install -r requirements.txt`
+- Install test deps: `pip install -r dev-requirements.txt`
+- Run server (stdio): `python postgres_server.py --conn "postgresql://user:pass@host:5432/db"`
+- Run server (HTTP): `python postgres_server.py --transport streamable-http --host 127.0.0.1 --port 8000`
+- Run tests: `pytest -q`
+- Lint: `ruff check .`
 
 ## Coding Style & Naming Conventions
-- Python 3.10+, 4-space indentation, PEP 8.
-- Use type hints (as in current code) and concise docstrings.
-- Functions/variables: `snake_case`; classes: `PascalCase`; MCP tool names: short `snake_case`.
-- Logging: use the existing `logger` instance; prefer informative, non-PII messages.
-- Optional formatting/linting: `black` and `ruff` (not enforced in repo). Example: `pip install black ruff && ruff check . && black .`.
+- Python 3.10+, PEP 8, 4-space indent; type hints and short docstrings.
+- Names: functions/vars `snake_case`; classes `PascalCase`; MCP tool names short `snake_case`.
+- Logging: use the module `logger`; avoid PII.
 
 ## Testing Guidelines
-- There is no test suite yet. Prefer adding `pytest` with tests under `tests/` named `test_*.py`.
-- For DB behaviors, use a disposable PostgreSQL instance or mock `psycopg2` connections.
-- Minimum smoke test: start server without DSN, verify each tool returns the friendly “connection string is not set” message.
+- Framework: `pytest` + `pytest-asyncio` with files in `tests/` named `test_*.py`.
+- No-DSN behavior is required: without `DATABASE_URL`, tools must return friendly empty/notice results.
+- Integration tests are skipped unless `DATABASE_URL` is set.
 
-## Typed Tools & Resources
-- Preferred tools: `run_query(QueryInput)` and `run_query_json(QueryJSONInput)` with validated inputs (via Pydantic) and `row_limit` safeguards.
-- Legacy tools `query`/`query_json` remain for backward compatibility.
-- Table resources: `table://{schema}/{table}` (best-effort registration), with fallback tools `list_table_resources` and `read_table_resource`.
-- Prompts available as MCP prompts and tools: `write_safe_select`, `explain_plan_tips`.
-
-## Tests
-- Test deps: `dev-requirements.txt` (`pytest`, `pytest-cov`).
-- Layout: `tests/test_server_tools.py` includes no-DSN smoke tests and prompt checks.
-- Run: `pytest -q`. Ensure runtime deps installed from `requirements.txt`.
+## Tools & Resources
+- Tools: `query`, `list_schemas`, `list_tables`, `describe_table`, `get_foreign_keys`, `find_relationships`, `server_info`, `db_identity`.
+- Resources: `table://{schema}/{table}` — reads up to 100 rows.
+- Prompts: `write_safe_select`, `explain_plan_tips`.
 
 ## Commit & Pull Request Guidelines
-- Commit style: conventional commits preferred (`feat:`, `fix:`, `chore:`, `docs:`). Keep subjects imperative and concise.
-- PRs should include: purpose & scope, before/after behavior, example commands/queries, and any config changes (`POSTGRES_CONNECTION_STRING`, Docker, `mcp.json`).
-- When adding tools, document them in `README.md` (name, args, example) and ensure safe output formatting.
-- Never commit secrets. `.env`, `.venv`, and credentials are ignored by `.gitignore`.
+- Commits: conventional style (`feat:`, `fix:`, `chore:`, `docs:`), imperative and concise.
+- PRs: include purpose/scope, before/after behavior, example commands/queries, and config changes.
+- Do not commit secrets; `.env` and credentials are ignored by `.gitignore`.
 
 ## Security & Configuration Tips
-- Pass DB credentials via `POSTGRES_CONNECTION_STRING` env var; avoid hardcoding.
-- Prefer least-privilege DB users and SSL options (e.g., add `?sslmode=require`).
-- The server runs without a DSN for inspection; database-backed tools should fail gracefully (maintain this behavior).
+- Provide DB creds via `DATABASE_URL`; prefer least-privilege users and SSL (e.g., `?sslmode=require`).
+- Safety toggles: `POSTGRES_READONLY=true`, `POSTGRES_STATEMENT_TIMEOUT_MS=5000`.
+- Auth mode: set `MCP_AUTH_ISSUER` + `MCP_PERMISSIONS_FILE` for JWT-based per-user permissions.
+- Server should run safely without a DSN; keep graceful failure paths intact.

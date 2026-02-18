@@ -1,23 +1,31 @@
-# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
-
 startCommand:
-  type: stdio
+  type: streamable-http
   configSchema:
-    # JSON Schema defining the configuration options for the MCP.
     type: object
     required:
       - connectionString
     properties:
       connectionString:
         type: string
-        description: PostgreSQL connection string, e.g.,
-          postgresql://username:password@host:port/database
-  commandFunction:
-    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
-    |-
+        description: PostgreSQL connection string
+      host:
+        type: string
+        default: 127.0.0.1
+      port:
+        type: integer
+        default: 8000
+  commandFunction: |-
     (config) => ({
       command: 'python',
-      args: ['postgres_server.py', '--conn', config.connectionString]
+      args: [
+        'postgres_server.py',
+        '--transport', 'streamable-http',
+        '--host', config.host || '127.0.0.1',
+        '--port', String(config.port || 8000),
+        '--conn', config.connectionString,
+      ],
     })
   exampleConfig:
     connectionString: postgresql://user:pass@localhost:5432/mydatabase
+    host: 127.0.0.1
+    port: 8000

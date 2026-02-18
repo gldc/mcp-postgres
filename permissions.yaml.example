@@ -1,0 +1,29 @@
+# permissions.yaml.example
+# Copy to permissions.yaml and configure for your environment.
+# Only used when auth is enabled (MCP_AUTH_ISSUER is set).
+
+roles:
+  analyst:
+    schemas: ["public"]
+    tables: "*"                  # all tables in allowed schemas
+    operations: ["select"]
+
+  engineer:
+    schemas: ["public", "analytics", "internal"]
+    tables: "*"
+    operations: ["select", "insert", "update", "delete"]
+
+  restricted:
+    schemas: ["public"]
+    tables: ["products", "categories"]  # explicit allowlist
+    operations: ["select"]
+
+users:
+  # Keyed by the 'sub' claim from the JWT token
+  alice@company.com:
+    role: engineer
+  bob@company.com:
+    role: analyst
+
+  # Default role for authenticated users not listed above
+  _default: restricted

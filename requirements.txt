@@ -1,3 +1,15 @@
-psycopg[binary]>=3.1.18
-fastmcp>=1.0.0,<2.0.0
-pydantic>=2.6.0
+# Core MCP
+mcp[cli]>=1.20.0
+
+# Database
+psycopg[binary]>=3.1.0
+psycopg_pool>=3.1.0
+
+# Auth (optional runtime — server works without these if auth disabled)
+pyjwt[crypto]>=2.8.0
+
+# Permissions config
+pyyaml>=6.0
+
+# Web server (needed for streamable-http/sse transports, pulled in by mcp[cli])
+uvicorn>=0.24.0
