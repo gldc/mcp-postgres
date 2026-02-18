@@ -58,6 +58,7 @@ Thumbs.db
 *.env
 config.ini
 credentials.json
+.mcp.json
 .cursor/
 glama/
 permissions.yaml
