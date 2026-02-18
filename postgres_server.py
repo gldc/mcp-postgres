@@ -493,7 +493,8 @@ async def list_schemas(
     conditions = []
     params: list[Any] = []
     if not include_system:
-        conditions.append("n.nspname NOT LIKE 'pg_%' AND n.nspname != 'information_schema'")
+        conditions.append("n.nspname NOT LIKE %s AND n.nspname != %s")
+        params.extend(["pg_%", "information_schema"])
     if name_pattern:
         conditions.append("n.nspname ILIKE %s")
         params.append(name_pattern)
